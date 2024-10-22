@@ -1,4 +1,6 @@
 # Mochi 1
+[Blog](https://www.genmo.ai/blog) | [Hugging Face](https://huggingface.co/genmo/mochi-1-preview) | [Playground](https://www.genmo.ai/play) | [Careers](https://jobs.ashbyhq.com/genmo)
+
 A state of the art video generation model by [Genmo](https://genmo.ai).
 
 https://github.com/user-attachments/assets/4d268d02-906d-4cb0-87cc-f467f1497108
