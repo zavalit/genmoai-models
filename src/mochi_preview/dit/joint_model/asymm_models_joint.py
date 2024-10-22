@@ -43,10 +43,8 @@ class AsymmetricAttention(nn.Module):
         num_heads: int = 8,
         qkv_bias: bool = True,
         qk_norm: bool = False,
-        attn_drop: float = 0.0,
         update_y: bool = True,
         out_bias: bool = True,
-        attend_to_padding: bool = False,
         softmax_scale: Optional[float] = None,
         device: Optional[torch.device] = None,
     ):
@@ -55,9 +53,7 @@ class AsymmetricAttention(nn.Module):
         self.dim_y = dim_y
         self.num_heads = num_heads
         self.head_dim = dim_x // num_heads
-        self.attn_drop = attn_drop
         self.update_y = update_y
-        self.attend_to_padding = attend_to_padding
         self.softmax_scale = softmax_scale
         if dim_x % num_heads != 0:
             raise ValueError(
@@ -414,16 +410,12 @@ class AsymmDiTJoint(nn.Module):
         num_heads=16,
         mlp_ratio_x=8.0,
         mlp_ratio_y=4.0,
-        use_t5: bool = False,
         t5_feat_dim: int = 4096,
         t5_token_length: int = 256,
-        learn_sigma=True,
         patch_embed_bias: bool = True,
         timestep_mlp_bias: bool = True,
-        attend_to_padding: bool = False,
         timestep_scale: Optional[float] = None,
         use_extended_posenc: bool = False,
-        posenc_preserve_area: bool = False,
         rope_theta: float = 10000.0,
         device: Optional[torch.device] = None,
         **block_kwargs,
@@ -432,7 +424,7 @@ class AsymmDiTJoint(nn.Module):
 
         self.learn_sigma = learn_sigma
         self.in_channels = in_channels
-        self.out_channels = in_channels * 2 if learn_sigma else in_channels
+        self.out_channels = in_channels
         self.patch_size = patch_size
         self.num_heads = num_heads
         self.hidden_size_x = hidden_size_x
@@ -440,10 +432,7 @@ class AsymmDiTJoint(nn.Module):
         self.head_dim = (
             hidden_size_x // num_heads
         )  # Head dimension and count is determined by visual.
-        self.attend_to_padding = attend_to_padding
         self.use_extended_posenc = use_extended_posenc
-        self.posenc_preserve_area = posenc_preserve_area
-        self.use_t5 = use_t5
         self.t5_token_length = t5_token_length
         self.t5_feat_dim = t5_feat_dim
         self.rope_theta = (
@@ -463,23 +452,20 @@ class AsymmDiTJoint(nn.Module):
             hidden_size_x, bias=timestep_mlp_bias, timestep_scale=timestep_scale
         )
 
-        if self.use_t5:
-            # Caption Pooling (T5)
-            self.t5_y_embedder = AttentionPool(
-                t5_feat_dim, num_heads=8, output_dim=hidden_size_x, device=device
-            )
+        # Caption Pooling (T5)
+        self.t5_y_embedder = AttentionPool(
+            t5_feat_dim, num_heads=8, output_dim=hidden_size_x, device=device
+        )
 
-            # Dense Embedding Projection (T5)
-            self.t5_yproj = nn.Linear(
-                t5_feat_dim, hidden_size_y, bias=True, device=device
-            )
+        # Dense Embedding Projection (T5)
+        self.t5_yproj = nn.Linear(
+            t5_feat_dim, hidden_size_y, bias=True, device=device
+        )
 
         # Initialize pos_frequencies as an empty parameter.
         self.pos_frequencies = nn.Parameter(
             torch.empty(3, self.num_heads, self.head_dim // 2, device=device)
         )
-
-        assert not self.attend_to_padding
 
         # for depth 48:
         #  b =  0: AsymmetricJointBlock, update_y=True
@@ -498,7 +484,6 @@ class AsymmDiTJoint(nn.Module):
                 mlp_ratio_x=mlp_ratio_x,
                 mlp_ratio_y=mlp_ratio_y,
                 update_y=update_y,
-                attend_to_padding=attend_to_padding,
                 device=device,
                 **block_kwargs,
             )
@@ -557,7 +542,6 @@ class AsymmDiTJoint(nn.Module):
             # Global vector embedding for conditionings.
             c_t = self.t_embedder(1 - sigma)  # (B, D)
 
-        assert self.use_t5
         with torch.profiler.record_function("t5_pool"):
             # Pool T5 tokens using attention pooler
             # Note y_feat[1] contains T5 token features.
@@ -573,7 +557,6 @@ class AsymmDiTJoint(nn.Module):
 
         y_feat = self.t5_yproj(t5_feat)  # (B, L, t5_feat_dim) --> (B, L, D)
 
-        assert not self.attend_to_padding
         return x, c, y_feat, rope_cos, rope_sin
 
     def forward(
