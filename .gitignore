@@ -1,0 +1,8 @@
+.venv
+.venv_test
+dist
+__pycache__
+mochi.egg-info
+outputs
+build
+.ruff_cache
