@@ -37,7 +37,7 @@ python3 -m mochi_preview.gradio_ui --model_dir "<path_to_downloaded_directory>"
 Or generate videos directly from the CLI with
 
 ```bash
-python3 -m mochi_preview.infer --prompt "A hand with delicate fingers picks up a bright yellow lemon from a wooden bowl filled with lemons and sprigs of mint against a peach-colored background. The hand gently tosses the lemon up and catches it, showcasing its smooth texture. A beige string bag sits beside the bowl, adding a rustic touch to the scene. Additional lemons, one halved, are scattered around the base of the bowl. The even lighting enhances the vibrant colors and creates a fresh, inviting atmosphere." --seed 1710977262 --cfg-scale 4.5 --model_dir "<path_to_downloaded_directory>"
+python3 -m mochi_preview.infer --prompt "A hand with delicate fingers picks up a bright yellow lemon from a wooden bowl filled with lemons and sprigs of mint against a peach-colored background. The hand gently tosses the lemon up and catches it, showcasing its smooth texture. A beige string bag sits beside the bowl, adding a rustic touch to the scene. Additional lemons, one halved, are scattered around the base of the bowl. The even lighting enhances the vibrant colors and creates a fresh, inviting atmosphere." --seed 1710977262 --cfg_scale 4.5 --model_dir "<path_to_downloaded_directory>"
 ```
 
 Replace `<path_to_downloaded_directory>` with the path to your model directory.
