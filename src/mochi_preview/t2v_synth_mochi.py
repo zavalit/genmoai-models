@@ -194,7 +194,7 @@ class T2VSynthMochiModel:
         if world_size > 1:
             os.environ["MASTER_ADDR"] = "127.0.0.1"
             os.environ["MASTER_PORT"] = "29500"
-            with t("init_process_group"):
+            with t("init_process_group (can take 20-30 seconds)"):
                 dist.init_process_group(
                     "nccl",
                     rank=local_rank,

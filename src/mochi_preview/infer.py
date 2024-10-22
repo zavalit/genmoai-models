@@ -9,6 +9,7 @@ import ray
 from einops import rearrange
 from PIL import Image
 from tqdm import tqdm
+import torch
 
 from mochi_preview.handler import MochiWrapper
 
@@ -29,9 +30,13 @@ def load_model():
         VAE_CHECKPOINT_PATH = f"{MOCHI_DIR}/vae.safetensors"
         MODEL_CONFIG_PATH = f"{MOCHI_DIR}/dit-config.yaml"
         MODEL_CHECKPOINT_PATH = f"{MOCHI_DIR}/dit.safetensors"
+        num_gpus = torch.cuda.device_count()
+        if num_gpus < 4:
+            print(f"WARNING: Mochi requires at least 4xH100 GPUs, but only {num_gpus} GPU(s) are available.")
+        print(f"Launching with {num_gpus} GPUs.")
 
         model = MochiWrapper(
-            num_workers=8,
+            num_workers=num_gpus,
             vae_stats_path=f"{MOCHI_DIR}/vae_stats.json",
             vae_checkpoint_path=VAE_CHECKPOINT_PATH,
             dit_config_path=MODEL_CONFIG_PATH,
