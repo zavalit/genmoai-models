@@ -44,10 +44,20 @@ Replace `<path_to_downloaded_directory>` with the path to your model directory.
 
 Mochi 1 represents a significant advancement in open-source video generation, featuring a 10 billion parameter diffusion model built on our novel Asymmetric Diffusion Transformer (AsymmDiT) architecture. Trained entirely from scratch, it is the largest video generative model ever openly released. And best of all, it’s a simple, hackable architecture.
 
-Alongside Mochi, we are open-sourcing our video VAE. Our VAE causally compresses videos to a 128x smaller size, with an 8x8 spatial and a 6x temporal compression to a 12-channel latent space.
+Alongside Mochi, we are open-sourcing our video AsymmVAE. We use an asymmetric encoder-decoder structure to build an efficient high quality compression model. Our AsymmVAE causally compresses videos to a 128x smaller size, with an 8x8 spatial and a 6x temporal compression to a 12-channel latent space. 
+
+### AsymmVAE Model Specs
+|Params <br> Count | Enc Base <br>  Channels | Dec Base <br> Channels |Latent <br> Dim | Spatial <br> Compression | Temporal <br> Compression | 
+|:--:|:--:|:--:|:--:|:--:|:--:|
+|362M   | 64  | 128  | 12   | 8x8   | 6x   | 
 
 An AsymmDiT efficiently processes user prompts alongside compressed video tokens by streamlining text processing and focusing neural network capacity on visual reasoning. AsymmDiT jointly attends to text and visual tokens with multi-modal self-attention and learns separate MLP layers for each modality, similar to Stable Diffusion 3. However, our visual stream has nearly 4 times as many parameters as the text stream via a larger hidden dimension. To unify the modalities in self-attention, we use non-square QKV and output projection layers. This asymmetric design reduces inference memory requirements.
 Many modern diffusion models use multiple pretrained language models to represent user prompts. In contrast, Mochi 1 simply encodes prompts with a single T5-XXL language model.
+
+### AsymmDiT Model Specs
+|Params <br> Count | Num <br> Layers | Num <br> Heads | Visual <br> Dim | Text <br> Dim | Visual <br> Tokens | Text <br> Tokens | 
+|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+|10B   | 48   | 24   | 3072   | 1536   | 44520   |   256   |
 
 ## Hardware Requirements
 
