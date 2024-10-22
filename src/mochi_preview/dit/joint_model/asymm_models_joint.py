@@ -421,8 +421,6 @@ class AsymmDiTJoint(nn.Module):
         **block_kwargs,
     ):
         super().__init__()
-
-        self.learn_sigma = learn_sigma
         self.in_channels = in_channels
         self.out_channels = in_channels
         self.patch_size = patch_size

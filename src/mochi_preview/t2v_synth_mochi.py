@@ -251,12 +251,25 @@ class T2VSynthMochiModel:
                 from mochi_preview.dit.joint_model.asymm_models_joint import (
                     AsymmDiTJoint,
                 )
-
-                config_raw = yaml.safe_load(f)
-                config_resolved = dict(OmegaConf.create(config_raw))
-                config_resolved.pop("_target_")
                 model: nn.Module = torch.nn.utils.skip_init(
-                    AsymmDiTJoint, **config_resolved
+                    AsymmDiTJoint,
+                    depth=48,
+                    patch_size=2,
+                    num_heads=24,
+                    hidden_size_x=3072,
+                    hidden_size_y=1536,
+                    mlp_ratio_x=4.0,
+                    mlp_ratio_y=4.0,
+                    in_channels=12,
+                    qk_norm=True,
+                    qkv_bias=False,
+                    out_bias=True,
+                    patch_embed_bias=True,
+                    timestep_mlp_bias=True,
+                    timestep_scale=1000.0,
+                    t5_feat_dim=4096,
+                    t5_token_length=256,
+                    rope_theta=10000.0,
                 )
         with t("dit_load_checkpoint"):
             # FSDP syncs weights
