@@ -110,7 +110,7 @@ def setup_fsdp_sync(model, device_id, *, param_dtype, auto_wrap_policy) -> FSDP:
         sync_module_states=True,
         use_orig_params=True,
     )
-    torch.cuda.synchronize()
+    #torch.cuda.synchronize()
     return model
 
 
@@ -431,12 +431,12 @@ class T2VSynthMochiModel:
 
         def model_fn(*, z, sigma, cfg_scale):
             if batch_cfg:
-                with torch.autocast("cuda", dtype=torch.bfloat16):
+                with torch.autocast("mps", dtype=torch.bfloat16):
                     out = self.dit(z, sigma, **sample_batched)
                 out_cond, out_uncond = torch.chunk(out, chunks=2, dim=0)
             else:
                 nonlocal sample, sample_null
-                with torch.autocast("cuda", dtype=torch.bfloat16):
+                with torch.autocast("mps", dtype=torch.bfloat16):
                     out_cond = self.dit(z, sigma, **sample)
                     out_uncond = self.dit(z, sigma, **sample_null)
             assert out_cond.shape == out_uncond.shape
@@ -475,7 +475,7 @@ class T2VSynthMochiModel:
             z = z[:B]
         z = z.tensor_split(cp_size, dim=2)[cp_rank]  # split along temporal dim
         samples = unnormalize_latents(z.float(), self.vae_mean, self.vae_std)
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        with torch.amp.autocast("mps", dtype=torch.bfloat16):
             samples = self.decoder(samples)
 
         samples = cp_conv.gather_all_frames(samples)

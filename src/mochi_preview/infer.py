@@ -30,7 +30,7 @@ def load_model():
         VAE_CHECKPOINT_PATH = f"{MOCHI_DIR}/vae.safetensors"
         MODEL_CONFIG_PATH = f"{MOCHI_DIR}/dit-config.yaml"
         MODEL_CHECKPOINT_PATH = f"{MOCHI_DIR}/dit.safetensors"
-        num_gpus = torch.cuda.device_count()
+        num_gpus = torch.mps.device_count()
         if num_gpus < 4:
             print(f"WARNING: Mochi requires at least 4xH100 GPUs, but only {num_gpus} GPU(s) are available.")
         print(f"Launching with {num_gpus} GPUs.")

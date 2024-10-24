@@ -167,7 +167,7 @@ class AsymmetricAttention(nn.Module):
         local_dim = local_heads * self.head_dim
         total = qkv.size(0)
 
-        with torch.autocast("cuda", enabled=False):
+        with torch.autocast("mps", enabled=False):
             out: torch.Tensor = flash_attn_varlen_qkvpacked_func(
                 qkv,
                 cu_seqlens=cu_seqlens,
