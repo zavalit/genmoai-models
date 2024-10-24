@@ -43,3 +43,15 @@ class MochiWrapper:
             for ref in work_refs[1:]:
                 noexcept(lambda: ray.get(ref))
             raise e
+
+
+class MochiWrapperSingleGPU:
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.worker = T2VSynthMochiModel(
+            device_id=0, world_size=1, local_rank=0, **kwargs
+        )
+
+    def __call__(self, args):
+        for result in self.worker.run(args, True):
+            yield result

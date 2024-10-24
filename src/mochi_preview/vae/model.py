@@ -459,9 +459,7 @@ class CausalUpsampleBlock(nn.Module):
 def block_fn(channels, *, has_attention: bool = False, **block_kwargs):
     attn_block = AttentionBlock(channels) if has_attention else None
 
-    return ResBlock(
-        channels, affine=True, attn_block=attn_block, **block_kwargs
-    )
+    return ResBlock(channels, affine=True, attn_block=attn_block, **block_kwargs)
 
 
 class DownsampleBlock(nn.Module):

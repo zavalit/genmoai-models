@@ -46,5 +46,6 @@ def launch(model_dir):
     set_model_path(model_dir)
     demo.launch()
 
+
 if __name__ == "__main__":
     launch()
