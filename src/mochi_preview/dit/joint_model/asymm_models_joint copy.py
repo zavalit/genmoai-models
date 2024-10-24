@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-from flash_attn import flash_attn_varlen_qkvpacked_func
 from torch.nn.attention import sdpa_kernel
 
 import mochi_preview.dit.joint_model.context_parallel as cp
@@ -153,6 +152,29 @@ class AsymmetricAttention(nn.Module):
 
         return qkv
 
+    def flash_attention(self, qkv, cu_seqlens, max_seqlen_in_batch, total, local_dim):
+        with torch.autocast("cuda", enabled=False):
+            out: torch.Tensor = flash_attn_varlen_qkvpacked_func(
+                qkv,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen_in_batch,
+                dropout_p=0.0,
+                softmax_scale=self.softmax_scale,
+            )  # (total, local_heads, head_dim)
+            return out.view(total, local_dim)
+
+    def sdpa_attention(self, qkv):
+        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
+        with torch.autocast("cuda", enabled=False):
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+            return rearrange(out, "b h s d -> s (b h d)")
+
+    def sage_attention(self, qkv):
+        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
+        with torch.autocast("cuda", enabled=False):
+            out = sageattn(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+            return rearrange(out, "b h s d -> s (b h d)")
+
     @torch.compiler.disable()
     def run_attention(
         self,
@@ -172,15 +194,14 @@ class AsymmetricAttention(nn.Module):
         local_dim = local_heads * self.head_dim
         total = qkv.size(0)
 
-        with torch.autocast("cuda", enabled=False):
-            out: torch.Tensor = flash_attn_varlen_qkvpacked_func(
-                qkv,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen_in_batch,
-                dropout_p=0.0,
-                softmax_scale=self.softmax_scale,
-            )  # (total, local_heads, head_dim)
-            out = out.view(total, local_dim)
+        if FLASH_ATTN_IS_AVAILABLE:
+            out = self.flash_attention(qkv, cu_seqlens, max_seqlen_in_batch, total, local_dim)
+        elif SAGEATTN_IS_AVAILABLE:
+            assert B == 1, f"Sage Attention only supports batch size 1, got {B}"
+            out = self.sage_attention(qkv)
+        else:
+            assert B == 1, f"SDPA Attention only supports batch size 1, got {B}"
+            out = self.sdpa_attention(qkv)
 
         x, y = pad_and_split_xy(out, valid_token_indices, B, N, L, qkv.dtype)
         assert x.size() == (B, N, local_dim)

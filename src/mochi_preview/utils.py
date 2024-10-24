@@ -31,16 +31,3 @@ class Timer:
             end_time = time.perf_counter()
             elapsed = end_time - self.start_time
             self.outer.times[self.name] = self.outer.times.get(self.name, 0) + elapsed
-
-try:
-    from flash_attn import flash_attn_varlen_qkvpacked_func
-    FLASH_ATTN_IS_AVAILABLE = True
-except ImportError:
-    flash_attn_varlen_qkvpacked_func = None
-    FLASH_ATTN_IS_AVAILABLE = False
-try:
-    from sageattention import sageattn
-    SAGEATTN_IS_AVAILABLE = True
-except ImportError:
-    sageattn = None
-    SAGEATTN_IS_AVAILABLE = False

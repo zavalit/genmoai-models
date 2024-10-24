@@ -26,3 +26,7 @@ flash = [
 
 [project.scripts]
 genmo = "mochi_preview.cli:cli"
+
+[tool.ruff]
+# Allow lines to be as long as 120.
+line-length = 120

@@ -157,9 +157,7 @@ class ContextParallelConv3d(SafeConv3d):
 
         # Less efficient implementation for strided convs.
         # All gather x, infer and chunk.
-        assert (
-            x.dtype == torch.bfloat16
-        ), f"Expected x to be of type torch.bfloat16, got {x.dtype}"
+        assert x.dtype == torch.bfloat16, f"Expected x to be of type torch.bfloat16, got {x.dtype}"
 
         x = gather_all_frames(x)  # [B, C, k - 1 + global_T, H, W]
         return StridedSafeConv3d.forward(self, x, local_shard=True)
@@ -381,9 +379,7 @@ class Attention(nn.Module):
         )
 
         if q.size(0) <= chunk_size:
-            x = F.scaled_dot_product_attention(
-                q, k, v, **attn_kwargs
-            )  # [B, num_heads, t, head_dim]
+            x = F.scaled_dot_product_attention(q, k, v, **attn_kwargs)  # [B, num_heads, t, head_dim]
         else:
             # Evaluate in chunks to avoid `RuntimeError: CUDA error: invalid configuration argument.`
             # Chunks of 2**16 and up cause an error.
@@ -445,9 +441,7 @@ class CausalUpsampleBlock(nn.Module):
             out_channels * temporal_expansion * (spatial_expansion**2),
         )
 
-        self.d2st = DepthToSpaceTime(
-            temporal_expansion=temporal_expansion, spatial_expansion=spatial_expansion
-        )
+        self.d2st = DepthToSpaceTime(temporal_expansion=temporal_expansion, spatial_expansion=spatial_expansion)
 
     def forward(self, x):
         x = self.blocks(x)
@@ -589,9 +583,7 @@ class Decoder(nn.Module):
 
         blocks = []
 
-        first_block = [
-            nn.Conv3d(latent_dim, ch[-1], kernel_size=(1, 1, 1))
-        ]  # Input layer.
+        first_block = [nn.Conv3d(latent_dim, ch[-1], kernel_size=(1, 1, 1))]  # Input layer.
         # First set of blocks preserve channel count.
         for _ in range(num_res_blocks[-1]):
             first_block.append(
@@ -627,15 +619,31 @@ class Decoder(nn.Module):
         # Last block. Preserve channel count.
         last_block = []
         for _ in range(num_res_blocks[0]):
-            last_block.append(
-                block_fn(
-                    ch[0], has_attention=has_attention[0], causal=causal, **block_kwargs
-                )
-            )
+            last_block.append(block_fn(ch[0], has_attention=has_attention[0], causal=causal, **block_kwargs))
         blocks.append(nn.Sequential(*last_block))
 
         self.blocks = nn.ModuleList(blocks)
         self.output_proj = Conv1x1(ch[0], out_channels)
+
+    def unnormalize_latents(
+        z: torch.Tensor,
+        mean: torch.Tensor,
+        std: torch.Tensor,
+    ) -> torch.Tensor:
+        """Unnormalize latents. Useful for decoding DiT samples.
+
+        Args:
+            z (torch.Tensor): [B, C_z, T_z, H_z, W_z], float
+
+        Returns:
+            torch.Tensor: [B, C_z, T_z, H_z, W_z], float
+        """
+        mean = mean[:, None, None, None]
+        std = std[:, None, None, None]
+
+        assert z.ndim == 5
+        assert z.size(1) == mean.size(0) == std.size(0)
+        return z * std.to(z) + mean.to(z)
 
     def forward(self, x):
         """Forward pass.
@@ -648,15 +656,15 @@ class Decoder(nn.Module):
                T + 1 = (t - 1) * 4.
                H = h * 16, W = w * 16.
         """
+        x = self.unnormalize_latents(x, self.vae_mean, self.vae_std)
+
         for block in self.blocks:
             x = block(x)
 
         if self.output_nonlinearity == "silu":
             x = F.silu(x, inplace=not self.training)
         else:
-            assert (
-                not self.output_nonlinearity
-            )  # StyleGAN3 omits the to-RGB nonlinearity.
+            assert not self.output_nonlinearity  # StyleGAN3 omits the to-RGB nonlinearity.
 
         return self.output_proj(x).contiguous()
 
@@ -698,9 +706,7 @@ def blend(a: torch.Tensor, b: torch.Tensor, axis: int) -> torch.Tensor:
     Returns:
         torch.Tensor: The blended tensor.
     """
-    assert (
-        a.shape == b.shape
-    ), f"Tensors must have the same shape, got {a.shape} and {b.shape}"
+    assert a.shape == b.shape, f"Tensors must have the same shape, got {a.shape} and {b.shape}"
     steps = a.size(axis)
 
     # Create a weight tensor that linearly interpolates from 0 to 1
@@ -753,12 +759,8 @@ def apply_tiled(
     if num_tiles_w == 1 and num_tiles_h == 1:
         return fn(x)
 
-    assert (
-        num_tiles_w & (num_tiles_w - 1) == 0
-    ), f"num_tiles_w={num_tiles_w} must be a power of 2"
-    assert (
-        num_tiles_h & (num_tiles_h - 1) == 0
-    ), f"num_tiles_h={num_tiles_h} must be a power of 2"
+    assert num_tiles_w & (num_tiles_w - 1) == 0, f"num_tiles_w={num_tiles_w} must be a power of 2"
+    assert num_tiles_h & (num_tiles_h - 1) == 0, f"num_tiles_h={num_tiles_h} must be a power of 2"
 
     H, W = x.shape[-2:]
     assert H % min_block_size == 0
@@ -773,12 +775,8 @@ def apply_tiled(
         right = x[..., :, half_W - ov :]
 
         assert num_tiles_w % 2 == 0, f"num_tiles_w={num_tiles_w} must be even"
-        left = apply_tiled(
-            fn, left, num_tiles_w // 2, num_tiles_h, overlap, min_block_size
-        )
-        right = apply_tiled(
-            fn, right, num_tiles_w // 2, num_tiles_h, overlap, min_block_size
-        )
+        left = apply_tiled(fn, left, num_tiles_w // 2, num_tiles_h, overlap, min_block_size)
+        right = apply_tiled(fn, right, num_tiles_w // 2, num_tiles_h, overlap, min_block_size)
         if left is None or right is None:
             return None
 
@@ -795,12 +793,8 @@ def apply_tiled(
         bottom = x[..., half_H - ov :, :]
 
         assert num_tiles_h % 2 == 0, f"num_tiles_h={num_tiles_h} must be even"
-        top = apply_tiled(
-            fn, top, num_tiles_w, num_tiles_h // 2, overlap, min_block_size
-        )
-        bottom = apply_tiled(
-            fn, bottom, num_tiles_w, num_tiles_h // 2, overlap, min_block_size
-        )
+        top = apply_tiled(fn, top, num_tiles_w, num_tiles_h // 2, overlap, min_block_size)
+        bottom = apply_tiled(fn, bottom, num_tiles_w, num_tiles_h // 2, overlap, min_block_size)
         if top is None or bottom is None:
             return None
 

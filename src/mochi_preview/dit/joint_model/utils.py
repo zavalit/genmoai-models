@@ -87,9 +87,7 @@ class AttentionPool(nn.Module):
         q = q.unsqueeze(2)  # (B, H, 1, head_dim)
 
         # Compute attention.
-        x = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_mask, dropout_p=0.0
-        )  # (B, H, 1, head_dim)
+        x = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=0.0)  # (B, H, 1, head_dim)
 
         # Concatenate heads and run output.
         x = x.squeeze(2).flatten(1, 2)  # (B, D = H * head_dim)
@@ -129,9 +127,7 @@ class PadSplitXY(torch.autograd.Function):
         # Pad sequences to (B, N + L, dim).
         assert indices.ndim == 1
         output = torch.zeros(B * (N + L), D, device=xy.device, dtype=dtype)
-        indices = indices.unsqueeze(1).expand(
-            -1, D
-        )  # (total,) -> (total, num_heads * head_dim)
+        indices = indices.unsqueeze(1).expand(-1, D)  # (total,) -> (total, num_heads * head_dim)
         output.scatter_(0, indices, xy)
         xy = output.view(B, N + L, D)
 

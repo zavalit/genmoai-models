@@ -1,7 +1,7 @@
 import click
 import gradio as gr
 
-from mochi_preview.infer import generate_video, set_model_path
+from mochi_preview.scripts.infer import generate_video, set_model_path
 
 with gr.Blocks() as demo:
     gr.Markdown("Video Generator")
@@ -18,9 +18,7 @@ with gr.Blocks() as demo:
         num_frames = gr.Number(label="Number of Frames", value=163, precision=0)
     with gr.Row():
         cfg_scale = gr.Number(label="CFG Scale", value=4.5)
-        num_inference_steps = gr.Number(
-            label="Number of Inference Steps", value=200, precision=0
-        )
+        num_inference_steps = gr.Number(label="Number of Inference Steps", value=200, precision=0)
     btn = gr.Button("Generate Video")
     output = gr.Video()
 

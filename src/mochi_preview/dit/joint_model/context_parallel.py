@@ -17,11 +17,7 @@ def local_shard(x: torch.Tensor, dim: int = 2) -> torch.Tensor:
 
 
 def set_cp_group(cp_group, ranks, global_rank):
-    global \
-        _CONTEXT_PARALLEL_GROUP, \
-        _CONTEXT_PARALLEL_RANK, \
-        _CONTEXT_PARALLEL_GROUP_SIZE, \
-        _CONTEXT_PARALLEL_GROUP_RANKS
+    global _CONTEXT_PARALLEL_GROUP, _CONTEXT_PARALLEL_RANK, _CONTEXT_PARALLEL_GROUP_SIZE, _CONTEXT_PARALLEL_GROUP_RANKS
     if _CONTEXT_PARALLEL_GROUP is not None:
         raise RuntimeError("CP group already initialized.")
     _CONTEXT_PARALLEL_GROUP = cp_group
@@ -29,8 +25,8 @@ def set_cp_group(cp_group, ranks, global_rank):
     _CONTEXT_PARALLEL_GROUP_SIZE = dist.get_world_size(cp_group)
     _CONTEXT_PARALLEL_GROUP_RANKS = ranks
 
-    assert (
-        _CONTEXT_PARALLEL_RANK == ranks.index(global_rank)
+    assert _CONTEXT_PARALLEL_RANK == ranks.index(
+        global_rank
     ), f"Rank mismatch: {global_rank} in {ranks} does not have position {_CONTEXT_PARALLEL_RANK} "
     assert _CONTEXT_PARALLEL_GROUP_SIZE == len(
         ranks
@@ -63,9 +59,7 @@ class AllGatherIntoTensorFunction(torch.autograd.Function):
         group_size = dist.get_world_size(group)
 
         x = x.contiguous()
-        output = torch.empty(
-            group_size * x.size(0), *x.shape[1:], dtype=x.dtype, device=x.device
-        )
+        output = torch.empty(group_size * x.size(0), *x.shape[1:], dtype=x.dtype, device=x.device)
         dist.all_gather_into_tensor(output, x, group=group)
         return output
 
@@ -74,9 +68,7 @@ def all_gather(tensor: torch.Tensor) -> torch.Tensor:
     if not _CONTEXT_PARALLEL_GROUP:
         return tensor
 
-    return AllGatherIntoTensorFunction.apply(
-        tensor, torch.float32, _CONTEXT_PARALLEL_GROUP
-    )
+    return AllGatherIntoTensorFunction.apply(tensor, torch.float32, _CONTEXT_PARALLEL_GROUP)
 
 
 @torch.compiler.disable()

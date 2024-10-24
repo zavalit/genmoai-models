@@ -49,9 +49,7 @@ class TimestepEmbedder(nn.Module):
         args = t[:, None].float() * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:
-            embedding = torch.cat(
-                [embedding, torch.zeros_like(embedding[:, :1])], dim=-1
-            )
+            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
         return embedding
 
     def forward(self, t):
@@ -137,9 +135,7 @@ class PatchEmbed(nn.Module):
             device=device,
         )
         assert norm_layer is None
-        self.norm = (
-            norm_layer(embed_dim, device=device) if norm_layer else nn.Identity()
-        )
+        self.norm = norm_layer(embed_dim, device=device) if norm_layer else nn.Identity()
 
     def forward(self, x):
         B, _C, T, H, W = x.shape

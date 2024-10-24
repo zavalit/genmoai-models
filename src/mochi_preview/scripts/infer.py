@@ -5,64 +5,47 @@ import time
 
 import click
 import numpy as np
-import ray
 import torch
-from einops import rearrange
 from PIL import Image
-from tqdm import tqdm
 
-from mochi_preview.model_wrappers import MochiWrapper, MochiWrapperSingleGPU
-from mochi_preview.utils import FLASH_ATTN_IS_AVAILABLE
+from mochi_preview.dit.joint_model.asymm_models_joint import FLASH_ATTN_IS_AVAILABLE
+from mochi_preview.pipelines import (
+    DecoderModelFactory,
+    DitModelFactory,
+    MochiMultiGPUPipeline,
+    MochiSingleGPUPipeline,
+    T5ModelFactory,
+    linear_quadratic_schedule,
+)
+from mochi_preview.progress import progress_bar
 
-model = None
-model_path = None
+pipeline = None
+model_dir_path = None
 num_gpus = torch.cuda.device_count()
 
+
 def set_model_path(path):
-    global model_path
-    model_path = path
+    global model_dir_path
+    model_dir_path = path
+
 
 def load_model():
-    global num_gpus, model, model_path
-    if model is None:
-        MOCHI_DIR = model_path
-        VAE_CHECKPOINT_PATH = f"{MOCHI_DIR}/vae.safetensors"
-        MODEL_CONFIG_PATH = f"{MOCHI_DIR}/dit-config.yaml"
-        MODEL_CHECKPOINT_PATH = f"{MOCHI_DIR}/dit.safetensors"
+    global num_gpus, pipeline, model_dir_path
+    if pipeline is None:
+        MOCHI_DIR = model_dir_path
         print(f"Launching with {num_gpus} GPUs. If you want to force single GPU mode use CUDA_VISIBLE_DEVICES=0.")
-        if num_gpus > 1:
-            ray.init()
-
-        klass = MochiWrapperSingleGPU if num_gpus == 1 else MochiWrapper
-        model = klass(
-            num_workers=num_gpus,
-            vae_stats_path=f"{MOCHI_DIR}/vae_stats.json",
-            vae_checkpoint_path=VAE_CHECKPOINT_PATH,
-            dit_config_path=MODEL_CONFIG_PATH,
-            dit_checkpoint_path=MODEL_CHECKPOINT_PATH,
+        klass = MochiSingleGPUPipeline if num_gpus == 1 else MochiMultiGPUPipeline
+        kwargs = dict(
+            text_encoder_factory=T5ModelFactory(),
+            dit_factory=DitModelFactory(model_path=f"{MOCHI_DIR}/dit.safetensors", model_dtype="bf16"),
+            decoder_factory=DecoderModelFactory(
+                model_path=f"{MOCHI_DIR}/vae.safetensors",
+                model_stats_path=f"{MOCHI_DIR}/vae_stats.json",
+            ),
         )
-
-
-def linear_quadratic_schedule(num_steps, threshold_noise, linear_steps=None):
-    if linear_steps is None:
-        linear_steps = num_steps // 2
-    linear_sigma_schedule = [
-        i * threshold_noise / linear_steps for i in range(linear_steps)
-    ]
-    threshold_noise_step_diff = linear_steps - threshold_noise * num_steps
-    quadratic_steps = num_steps - linear_steps
-    quadratic_coef = threshold_noise_step_diff / (linear_steps * quadratic_steps**2)
-    linear_coef = threshold_noise / linear_steps - 2 * threshold_noise_step_diff / (
-        quadratic_steps**2
-    )
-    const = quadratic_coef * (linear_steps**2)
-    quadratic_sigma_schedule = [
-        quadratic_coef * (i**2) + linear_coef * i + const
-        for i in range(linear_steps, num_steps)
-    ]
-    sigma_schedule = linear_sigma_schedule + quadratic_sigma_schedule + [1.0]
-    sigma_schedule = [1.0 - x for x in sigma_schedule]
-    return sigma_schedule
+        if num_gpus > 1:
+            kwargs["world_size"] = num_gpus
+        pipeline = klass(**kwargs)
 
 
 def generate_video(
@@ -91,28 +74,24 @@ def generate_video(
         "height": height,
         "width": width,
         "num_frames": num_frames,
-        "mochi_args": {
-            "sigma_schedule": sigma_schedule,
-            "cfg_schedule": cfg_schedule,
-            "num_inference_steps": num_inference_steps,
-            "batch_cfg": FLASH_ATTN_IS_AVAILABLE,
-        },
-        "prompt": [prompt],
-        "negative_prompt": [negative_prompt],
+        "sigma_schedule": sigma_schedule,
+        "cfg_schedule": cfg_schedule,
+        "num_inference_steps": num_inference_steps,
+        # We *need* flash attention to batch cfg
+        # and it's only worth doing in a high-memory regime (assume multiple GPUs)
+        # "batch_cfg": FLASH_ATTN_IS_AVAILABLE and num_gpus > 1,
+        "batch_cfg": False,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
         "seed": seed,
     }
 
-    final_frames = None
-    for cur_progress, frames, finished in tqdm(
-        model(args), total=num_inference_steps + 1
-    ):
-        final_frames = frames
+    final_frames = pipeline(**args)
+
+    final_frames = final_frames[0]
 
     assert isinstance(final_frames, np.ndarray)
     assert final_frames.dtype == np.float32
-
-    final_frames = rearrange(final_frames, "t b h w c -> b t h w c")
-    final_frames = final_frames[0]
 
     os.makedirs("outputs", exist_ok=True)
     output_path = os.path.join("outputs", f"output_{int(time.time())}.mp4")
@@ -139,9 +118,7 @@ def generate_video(
 
 @click.command()
 @click.option("--prompt", required=True, help="Prompt for video generation.")
-@click.option(
-    "--negative_prompt", default="", help="Negative prompt for video generation."
-)
+@click.option("--negative_prompt", default="", help="Negative prompt for video generation.")
 @click.option("--width", default=848, type=int, help="Width of the video.")
 @click.option("--height", default=480, type=int, help="Height of the video.")
 @click.option("--num_frames", default=163, type=int, help="Number of frames.")
