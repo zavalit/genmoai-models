@@ -13,6 +13,28 @@ Mochi 1 preview is an open state-of-the-art video generation model with high-fid
 
 Install using [uv](https://github.com/astral-sh/uv):
 
+Apple M1 recommended to use
+```bash
+$ curl -L https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh -o Miniforge3-MacOSX-arm64.sh
+bash Miniforge3-MacOSX-arm64.sh
+
+
+$ source ~/miniforge3/bin/activate
+
+$ conda create -n genmoai python=3.11
+
+$ conda activate genmoai
+
+$ conda create -n torch-nightly python=3.8 
+
+$ conda activate torch-nightly
+
+$ pip install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cpu
+```
+
+      Then, if you want to run PyTorch code on the GPU, use torch.device("mps") analogous to torch.device("cuda") on an Nvidia GPU.
+
+
 ```bash
 git clone https://github.com/genmoai/models
 cd models 
