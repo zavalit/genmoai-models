@@ -92,7 +92,7 @@ class T5ModelFactory(ModelFactory):
 
     def get_model(self, *, local_rank, device_id, world_size):
         super().get_model(local_rank=local_rank, device_id=device_id, world_size=world_size)
-        model = T5EncoderModel.from_pretrained(T5_MODEL).eval()
+        model = T5EncoderModel.from_pretrained(T5_MODEL)
         if world_size > 1:
             model = setup_fsdp_sync(
                 model,
@@ -330,10 +330,6 @@ def sample_model(device, dit, conditioning, **args):
     def model_fn(*, z, sigma, cfg_scale):
         if cond_batched:
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                print(
-                    f"z: {z.shape}, sigma: {sigma.shape}, y_mask: {cond_batched['y_mask'][0].shape}, y_feat: {cond_batched['y_feat'][0].shape}"
-                    f"packed_indices: (cu_seqlens) {cond_batched['packed_indices']['cu_seqlens_kv'].shape}, (max_seqlen) {cond_batched['packed_indices']['max_seqlen_in_batch_kv']}, (valid_token_indices) {cond_batched['packed_indices']['valid_token_indices_kv'].shape}"
-                )
                 out = dit(z, sigma, **cond_batched)
             out_cond, out_uncond = torch.chunk(out, chunks=2, dim=0)
         else:
@@ -459,23 +455,24 @@ class MultiGPUContext:
         local_rank,
         world_size,
     ):
+        t = Timer()
         self.device = torch.device(f"cuda:{device_id}")
         print(f"Initializing rank {local_rank+1}/{world_size}")
         assert world_size > 1, f"Multi-GPU mode requires world_size > 1, got {world_size}"
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = "29500"
-        dist.init_process_group(
-            "nccl",
-            rank=local_rank,
-            world_size=world_size,
-            device_id=self.device,  # force non-lazy init
-        )
+        with t('init_process_group'):
+            dist.init_process_group(
+                "nccl",
+                rank=local_rank,
+                world_size=world_size,
+                device_id=self.device,  # force non-lazy init
+            )
         pg = dist.group.WORLD
         cp.set_cp_group(pg, list(range(world_size)), local_rank)
         distributed_kwargs = dict(local_rank=local_rank, device_id=device_id, world_size=world_size)
         self.world_size = world_size
         self.tokenizer = t5_tokenizer()
-        t = Timer()
         with t("load_text_encoder"):
             self.text_encoder = text_encoder_factory.get_model(**distributed_kwargs)
         with t("load_dit"):
