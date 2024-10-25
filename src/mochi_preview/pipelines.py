@@ -514,10 +514,9 @@ class MochiMultiGPUPipeline:
         for ctx in self.ctxs:
             ray.get(ctx.__ray_ready__.remote())
 
-    @torch.inference_mode(mode=True)
     def __call__(self, **kwargs):
         def sample(ctx, *, batch_cfg, prompt, negative_prompt, **kwargs):
-            with progress_bar(type="tqdm", enabled=ctx.local_rank == 0):
+            with progress_bar(type="tqdm", enabled=ctx.local_rank == 0), torch.inference_mode():
                 conditioning = get_conditioning(
                     ctx.tokenizer,
                     ctx.text_encoder,
