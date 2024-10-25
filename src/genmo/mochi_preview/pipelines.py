@@ -31,7 +31,7 @@ from transformers.models.t5.modeling_t5 import T5Block
 
 import genmo.mochi_preview.dit.joint_model.context_parallel as cp
 import genmo.mochi_preview.vae.cp_conv as cp_conv
-from genmo.mochi_preview.vae.model import Decoder
+from genmo.mochi_preview.vae.model import Decoder, apply_tiled
 from genmo.lib.progress import get_new_progress_bar, progress_bar
 from genmo.lib.utils import Timer
 
@@ -382,7 +382,7 @@ def decode_latents(decoder, z):
 
 
 @torch.inference_mode()
-def decode_latents_tiled(
+def decode_latents_tiled_full(
     decoder,
     z,
     *,
@@ -468,6 +468,20 @@ def decode_latents_tiled(
 
     return decoded_latents_to_frames(torch.cat(result_rows, dim=3))
 
+@torch.inference_mode()
+def decode_latents_tiled_spatial(
+    decoder,
+    z,
+    *,
+    num_tiles_w: int,
+    num_tiles_h: int,
+    overlap: int = 0,  # Number of pixel of overlap between adjacent tiles.
+    # Use a factor of 2 times the latent downsample factor.
+    min_block_size: int = 1,  # Minimum number of pixels in each dimension when subdividing.
+):
+    decoded = apply_tiled(decoder, z, num_tiles_w, num_tiles_h, overlap, min_block_size)
+    assert decoded is not None, f"Failed to decode latents with tiled spatial method"
+    return decoded
 
 @contextmanager
 def move_to_device(model: nn.Module, target_device):
@@ -494,15 +508,15 @@ class MochiSingleGPUPipeline:
         dit_factory: ModelFactory,
         decoder_factory: ModelFactory,
         cpu_offload: Optional[bool] = False,
-        tiled_decode: Optional[bool] = False,
-        tiled_decode_args: Optional[Dict[str, Any]] = None,
+        decode_type: str = "full",
+        decode_args: Optional[Dict[str, Any]] = None,
     ):
         self.device = torch.device("cuda:0")
         self.tokenizer = t5_tokenizer()
         t = Timer()
         self.cpu_offload = cpu_offload
-        self.tiled_decode_args = tiled_decode_args or {}
-        self.tiled_decode = tiled_decode
+        self.decode_args = decode_args or {}
+        self.decode_type = decode_type
         init_id = "cpu" if cpu_offload else 0
         with t("load_text_encoder"):
             self.text_encoder = text_encoder_factory.get_model(
@@ -537,8 +551,11 @@ class MochiSingleGPUPipeline:
             print_max_memory()
             with move_to_device(self.decoder, self.device):
                 frames = (
-                    decode_latents_tiled(self.decoder, latents, **self.tiled_decode_args)
-                    if self.tiled_decode
+                    decode_latents_tiled_full(self.decoder, latents, **self.decode_args)
+                    if self.decode_type == "tiled_full"
+                    else
+                    decode_latents_tiled_spatial(self.decoder, latents, **self.decode_args)
+                    if self.decode_type == "tiled_spatial"
                     else decode_latents(self.decoder, latents)
                 )
             print_max_memory()

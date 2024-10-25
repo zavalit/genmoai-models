@@ -756,7 +756,7 @@ def apply_tiled(
     overlap: int = 0,  # Number of pixel of overlap between adjacent tiles.
     # Use a factor of 2 times the latent downsample factor.
     min_block_size: int = 1,  # Minimum number of pixels in each dimension when subdividing.
-):
+) -> Optional[torch.Tensor]:
     if num_tiles_w == 1 and num_tiles_h == 1:
         return fn(x)
 
