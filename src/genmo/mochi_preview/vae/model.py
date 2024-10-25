@@ -5,8 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 
-import mochi_preview.dit.joint_model.context_parallel as cp
-from mochi_preview.vae.cp_conv import cp_pass_frames, gather_all_frames
+import genmo.mochi_preview.dit.joint_model.context_parallel as cp
+from genmo.mochi_preview.vae.cp_conv import cp_pass_frames, gather_all_frames
 
 
 def cast_tuple(t, length=1):

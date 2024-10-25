@@ -1,7 +1,7 @@
 [project]
-name = "mochi"
+name = "genmo"
 version = "0.1.0"
-description = "Add your description here"
+description = "Genmo models"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -23,9 +23,6 @@ dependencies = [
 flash = [
     "flash-attn>=2.6.3",
 ]
-
-[project.scripts]
-genmo = "mochi_preview.cli:cli"
 
 [tool.ruff]
 # Allow lines to be as long as 120.

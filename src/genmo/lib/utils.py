@@ -6,8 +6,7 @@ import time
 import numpy as np
 from PIL import Image
 
-from mochi_preview.progress import get_new_progress_bar
-
+from genmo.lib.progress import get_new_progress_bar
 
 class Timer:
     def __init__(self):

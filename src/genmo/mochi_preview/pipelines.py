@@ -29,11 +29,11 @@ from torch.distributed.fsdp.wrap import (
 from transformers import T5EncoderModel, T5Tokenizer
 from transformers.models.t5.modeling_t5 import T5Block
 
-import mochi_preview.dit.joint_model.context_parallel as cp
-import mochi_preview.vae.cp_conv as cp_conv
-from mochi_preview.progress import get_new_progress_bar, progress_bar
-from mochi_preview.utils import Timer
-from mochi_preview.vae.model import Decoder
+import genmo.mochi_preview.dit.joint_model.context_parallel as cp
+import genmo.mochi_preview.vae.cp_conv as cp_conv
+from genmo.mochi_preview.vae.model import Decoder
+from genmo.lib.progress import get_new_progress_bar, progress_bar
+from genmo.lib.utils import Timer
 
 
 def linear_quadratic_schedule(num_steps, threshold_noise, linear_steps=None):
@@ -114,7 +114,7 @@ class T5ModelFactory(ModelFactory):
 class DitModelFactory(ModelFactory):
     def __init__(self, *, model_path: str, model_dtype: str, attention_mode: Optional[str] = None):
         if attention_mode is None:
-            from mochi_preview.attn_imports import flash_varlen_qkvpacked_attn # type: ignore
+            from genmo.lib.attn_imports import flash_varlen_qkvpacked_attn # type: ignore
 
             attention_mode = "sdpa" if flash_varlen_qkvpacked_attn is None else "flash"
         print(f"Attention mode: {attention_mode}")
@@ -122,7 +122,7 @@ class DitModelFactory(ModelFactory):
 
     def get_model(self, *, local_rank, device_id, world_size):
         # TODO(ved): Set flag for torch.compile
-        from mochi_preview.dit.joint_model.asymm_models_joint import (
+        from genmo.mochi_preview.dit.joint_model.asymm_models_joint import (
             AsymmDiTJoint,
         )
 

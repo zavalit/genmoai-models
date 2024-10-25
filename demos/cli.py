@@ -7,7 +7,7 @@ import click
 import numpy as np
 import torch
 
-from mochi_preview.pipelines import (
+from genmo.mochi_preview.pipelines import (
     DecoderModelFactory,
     DitModelFactory,
     MochiMultiGPUPipeline,
@@ -15,8 +15,8 @@ from mochi_preview.pipelines import (
     T5ModelFactory,
     linear_quadratic_schedule,
 )
-from mochi_preview.progress import progress_bar
-from mochi_preview.utils import save_video
+from genmo.lib.progress import progress_bar
+from genmo.lib.utils import save_video
 
 pipeline = None
 model_dir_path = None
