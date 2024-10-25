@@ -626,6 +626,7 @@ class Decoder(nn.Module):
         self.output_proj = Conv1x1(ch[0], out_channels)
 
     def unnormalize_latents(
+        self,
         z: torch.Tensor,
         mean: torch.Tensor,
         std: torch.Tensor,

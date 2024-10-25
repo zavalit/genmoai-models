@@ -358,7 +358,7 @@ def sample_model(device, dit, conditioning, **args):
 
 
 def decoded_latents_to_frames(samples):
-    assert samples.dtype == torch.float32
+    samples = samples.float()
     samples = (samples + 1.0) / 2.0
     samples.clamp_(0.0, 1.0)
     frames = rearrange(samples, "b c t h w -> b t h w c").cpu().numpy()
@@ -421,22 +421,22 @@ class MochiSingleGPUPipeline:
             self.decoder = decoder_factory.get_model(local_rank=0, device_id=init_id, world_size=1)
         t.print_stats()
 
-    @torch.inference_mode(mode=True)
     def __call__(self, batch_cfg, prompt, negative_prompt, **kwargs):
-        with move_to_device(self.text_encoder, "cuda:0"):
-            conditioning = get_conditioning(
-                self.tokenizer,
-                self.text_encoder,
-                self.device,
-                batch_cfg,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-            )
-        with move_to_device(self.dit, "cuda:0"):
-            latents = sample_model(self.device, self.dit, conditioning, **kwargs)
-        with move_to_device(self.decoder, "cuda:0"):
-            frames = decode_latents(self.decoder, latents)
-        return frames
+        with progress_bar(type="tqdm"), torch.inference_mode():
+            with move_to_device(self.text_encoder, "cuda:0"):
+                conditioning = get_conditioning(
+                    self.tokenizer,
+                    self.text_encoder,
+                    self.device,
+                    batch_cfg,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                )
+            with move_to_device(self.dit, "cuda:0"):
+                latents = sample_model(self.device, self.dit, conditioning, **kwargs)
+            with move_to_device(self.decoder, "cuda:0"):
+                frames = decode_latents(self.decoder, latents)
+            return frames
 
 
 ### ALL CODE BELOW HERE IS FOR MULTI-GPU MODE ###
@@ -513,7 +513,7 @@ class MochiMultiGPUPipeline:
 
     def __call__(self, **kwargs):
         def sample(ctx, *, batch_cfg, prompt, negative_prompt, **kwargs):
-            with progress_bar(type="tqdm", enabled=ctx.local_rank == 0), torch.inference_mode():
+            with progress_bar(type="ray_tqdm", enabled=ctx.local_rank == 0), torch.inference_mode():
                 conditioning = get_conditioning(
                     ctx.tokenizer,
                     ctx.text_encoder,

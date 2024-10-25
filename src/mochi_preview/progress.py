@@ -6,6 +6,11 @@ try:
 except ImportError:
     tqdm = None
 
+try:
+    from ray.experimental.tqdm_ray import tqdm as ray_tqdm
+except:
+    ray_tqdm = None
+
 # Global state
 _current_progress_type = "none"
 _is_progress_bar_active = False
@@ -38,6 +43,10 @@ def get_new_progress_bar(iterable: Optional[Iterable] = None, **kwargs) -> Itera
         if tqdm is None:
             raise ImportError("tqdm is required but not installed. Please install tqdm to use the tqdm progress bar.")
         return tqdm(iterable, **kwargs)
+    elif _current_progress_type == "ray_tqdm":
+        if ray_tqdm is None:
+            raise ImportError("ray is required but not installed. Please install ray to use the ray_tqdm progress bar.")
+        return ray_tqdm(iterable, **kwargs)
     return DummyProgressBar(iterable, **kwargs)
 
 
@@ -59,8 +68,8 @@ def progress_bar(type: str = "none", enabled=True):
             for i in get_new_progress_bar(range(100)):
                 process(i)
     """
-    if type not in ("none", "tqdm"):
-        raise ValueError("Progress bar type must be 'none' or 'tqdm'")
+    if type not in ("none", "tqdm", "ray_tqdm"):
+        raise ValueError("Progress bar type must be 'none' or 'tqdm' or 'ray_tqdm'")
     if not enabled:
         type = "none"
     global _current_progress_type, _is_progress_bar_active
