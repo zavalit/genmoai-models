@@ -44,7 +44,7 @@ class Timer:
 def save_video(final_frames, output_path):
     with tempfile.TemporaryDirectory() as tmpdir:
         frame_paths = []
-        for i, frame in get_new_progress_bar(enumerate(final_frames)):
+        for i, frame in enumerate(get_new_progress_bar(final_frames)):
             frame = (frame * 255).astype(np.uint8)
             frame_img = Image.fromarray(frame)
             frame_path = os.path.join(tmpdir, f"frame_{i:04d}.png")

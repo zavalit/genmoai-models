@@ -114,7 +114,7 @@ class T5ModelFactory(ModelFactory):
 class DitModelFactory(ModelFactory):
     def __init__(self, *, model_path: str, model_dtype: str, attention_mode: Optional[str] = None):
         if attention_mode is None:
-            from mochi_preview.attn_imports import flash_varlen_qkvpacked_attn
+            from mochi_preview.attn_imports import flash_varlen_qkvpacked_attn # type: ignore
 
             attention_mode = "sdpa" if flash_varlen_qkvpacked_attn is None else "flash"
         print(f"Attention mode: {attention_mode}")

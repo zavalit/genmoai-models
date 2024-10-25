@@ -1,12 +1,11 @@
+#! /usr/bin/env python
 import json
 import os
-import tempfile
 import time
 
 import click
 import numpy as np
 import torch
-from PIL import Image
 
 from mochi_preview.pipelines import (
     DecoderModelFactory,
@@ -17,6 +16,7 @@ from mochi_preview.pipelines import (
     linear_quadratic_schedule,
 )
 from mochi_preview.progress import progress_bar
+from mochi_preview.utils import save_video
 
 pipeline = None
 model_dir_path = None
@@ -24,7 +24,7 @@ num_gpus = torch.cuda.device_count()
 cpu_offload = False
 
 
-def set_model_path(model_dir_path_, cpu_offload_):
+def configure_model(model_dir_path_, cpu_offload_):
     global model_dir_path, cpu_offload
     model_dir_path = model_dir_path_
     cpu_offload = cpu_offload_
@@ -90,38 +90,38 @@ def generate_video(
         "seed": seed,
     }
 
-    final_frames = pipeline(**args)
+    with progress_bar(type="tqdm"):
+        final_frames = pipeline(**args)
 
-    final_frames = final_frames[0]
+        final_frames = final_frames[0]
 
-    assert isinstance(final_frames, np.ndarray)
-    assert final_frames.dtype == np.float32
+        assert isinstance(final_frames, np.ndarray)
+        assert final_frames.dtype == np.float32
 
-    os.makedirs("outputs", exist_ok=True)
-    output_path = os.path.join("outputs", f"output_{int(time.time())}.mp4")
+        os.makedirs("outputs", exist_ok=True)
+        output_path = os.path.join("outputs", f"output_{int(time.time())}.mp4")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        frame_paths = []
-        for i, frame in enumerate(final_frames):
-            frame = (frame * 255).astype(np.uint8)
-            frame_img = Image.fromarray(frame)
-            frame_path = os.path.join(tmpdir, f"frame_{i:04d}.png")
-            frame_img.save(frame_path)
-            frame_paths.append(frame_path)
 
-        frame_pattern = os.path.join(tmpdir, "frame_%04d.png")
-        ffmpeg_cmd = f"ffmpeg -y -r 30 -i {frame_pattern} -vcodec libx264 -pix_fmt yuv420p {output_path}"
-        os.system(ffmpeg_cmd)
-
+        save_video(final_frames, output_path)
         json_path = os.path.splitext(output_path)[0] + ".json"
-        with open(json_path, "w") as f:
-            json.dump(args, f, indent=4)
+        json.dump(args, open(json_path, "w"), indent=4)
 
-    return output_path
+        return output_path
 
+from textwrap import dedent
+
+DEFAULT_PROMPT = dedent("""
+A hand with delicate fingers picks up a bright yellow lemon from a wooden bowl 
+filled with lemons and sprigs of mint against a peach-colored background. 
+The hand gently tosses the lemon up and catches it, showcasing its smooth texture. 
+A beige string bag sits beside the bowl, adding a rustic touch to the scene. 
+Additional lemons, one halved, are scattered around the base of the bowl. 
+The even lighting enhances the vibrant colors and creates a fresh, 
+inviting atmosphere.
+""")
 
 @click.command()
-@click.option("--prompt", required=True, help="Prompt for video generation.")
+@click.option("--prompt", default=DEFAULT_PROMPT, help="Prompt for video generation.")
 @click.option("--negative_prompt", default="", help="Negative prompt for video generation.")
 @click.option("--width", default=848, type=int, help="Width of the video.")
 @click.option("--height", default=480, type=int, help="Height of the video.")
@@ -134,7 +134,7 @@ def generate_video(
 def generate_cli(
     prompt, negative_prompt, width, height, num_frames, seed, cfg_scale, num_steps, model_dir, cpu_offload
 ):
-    set_model_path(model_dir, cpu_offload)
+    configure_model(model_dir, cpu_offload)
     output = generate_video(
         prompt,
         negative_prompt,

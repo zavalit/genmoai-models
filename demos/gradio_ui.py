@@ -1,7 +1,12 @@
+#! /usr/bin/env python
+
+
 import click
 import gradio as gr
 
-from mochi_preview.scripts.infer import generate_video, set_model_path
+import sys
+sys.path.append("..")
+from cli import generate_video, configure_model
 
 with gr.Blocks() as demo:
     gr.Markdown("Video Generator")
@@ -40,8 +45,9 @@ with gr.Blocks() as demo:
 
 @click.command()
 @click.option("--model_dir", required=True, help="Path to the model directory.")
-def launch(model_dir):
-    set_model_path(model_dir)
+@click.option("--cpu_offload", is_flag=True, help="Whether to offload model to CPU")
+def launch(model_dir, cpu_offload):
+    configure_model(model_dir, cpu_offload)
     demo.launch()
 
 
