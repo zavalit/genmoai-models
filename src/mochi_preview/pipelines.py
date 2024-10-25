@@ -1,8 +1,9 @@
 import os
 import random
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from functools import partial
-from typing import Any, Dict, List, Literal, Union, cast
+from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 import numpy as np
 import ray
@@ -111,8 +112,13 @@ class T5ModelFactory(ModelFactory):
 
 
 class DitModelFactory(ModelFactory):
-    def __init__(self, *, model_path: str, model_dtype: str):
-        super().__init__(model_path=model_path, model_dtype=model_dtype)
+    def __init__(self, *, model_path: str, model_dtype: str, attention_mode: Optional[str] = None):
+        if attention_mode is None:
+            from mochi_preview.attn_imports import flash_varlen_qkvpacked_attn
+
+            attention_mode = "sdpa" if flash_varlen_qkvpacked_attn is None else "flash"
+        print(f"Attention mode: {attention_mode}")
+        super().__init__(model_path=model_path, model_dtype=model_dtype, attention_mode=attention_mode)
 
     def get_model(self, *, local_rank, device_id, world_size):
         # TODO(ved): Set flag for torch.compile
@@ -139,6 +145,7 @@ class DitModelFactory(ModelFactory):
             t5_feat_dim=4096,
             t5_token_length=256,
             rope_theta=10000.0,
+            attention_mode=self.kwargs["attention_mode"],
         )
 
         if local_rank == 0:
@@ -361,7 +368,7 @@ def decoded_latents_to_frames(samples):
     samples = samples.float()
     samples = (samples + 1.0) / 2.0
     samples.clamp_(0.0, 1.0)
-    frames = rearrange(samples, "b c t h w -> b t h w c").cpu().numpy()
+    frames = rearrange(samples, "b c t h w -> b t h w c")
     return frames
 
 
@@ -374,21 +381,105 @@ def decode_latents(decoder, z):
     return decoded_latents_to_frames(samples)
 
 
-def decode_latents_tiled(decoder, z):
-    pass
+@torch.inference_mode()
+def decode_latents_tiled(
+    decoder,
+    z,
+    *,
+    tile_sample_min_height: int = 240,
+    tile_sample_min_width: int = 424,
+    tile_overlap_factor_height: float = 0.1666,
+    tile_overlap_factor_width: float = 0.2,
+    auto_tile_size: bool = True,
+    frame_batch_size: int = 6,
+):
+    B, C, T, H, W = z.shape
+    assert frame_batch_size <= T, f"frame_batch_size must be <= T, got {frame_batch_size} > {T}"
 
+    tile_sample_min_height = tile_sample_min_height if not auto_tile_size else H // 2 * 8
+    tile_sample_min_width = tile_sample_min_width if not auto_tile_size else W // 2 * 8
 
-from contextlib import contextmanager
+    tile_latent_min_height = int(tile_sample_min_height / 8)
+    tile_latent_min_width = int(tile_sample_min_width / 8)
+
+    def blend_v(a: torch.Tensor, b: torch.Tensor, blend_extent: int) -> torch.Tensor:
+        blend_extent = min(a.shape[3], b.shape[3], blend_extent)
+        for y in range(blend_extent):
+            b[:, :, :, y, :] = a[:, :, :, -blend_extent + y, :] * (1 - y / blend_extent) + b[:, :, :, y, :] * (
+                y / blend_extent
+            )
+        return b
+
+    def blend_h(a: torch.Tensor, b: torch.Tensor, blend_extent: int) -> torch.Tensor:
+        blend_extent = min(a.shape[4], b.shape[4], blend_extent)
+        for x in range(blend_extent):
+            b[:, :, :, :, x] = a[:, :, :, :, -blend_extent + x] * (1 - x / blend_extent) + b[:, :, :, :, x] * (
+                x / blend_extent
+            )
+        return b
+
+    overlap_height = int(tile_latent_min_height * (1 - tile_overlap_factor_height))
+    overlap_width = int(tile_latent_min_width * (1 - tile_overlap_factor_width))
+    blend_extent_height = int(tile_sample_min_height * tile_overlap_factor_height)
+    blend_extent_width = int(tile_sample_min_width * tile_overlap_factor_width)
+    row_limit_height = tile_sample_min_height - blend_extent_height
+    row_limit_width = tile_sample_min_width - blend_extent_width
+
+    # Split z into overlapping tiles and decode them separately.
+    # The tiles have an overlap to avoid seams between tiles.
+    pbar = get_new_progress_bar(
+        desc="Decoding latent tiles",
+        total=len(range(0, H, overlap_height)) * len(range(0, W, overlap_width)) * len(range(T // frame_batch_size)),
+    )
+    rows = []
+    for i in range(0, H, overlap_height):
+        row = []
+        for j in range(0, W, overlap_width):
+            temporal = []
+            for k in range(T // frame_batch_size):
+                remaining_frames = T % frame_batch_size
+                start_frame = frame_batch_size * k + (0 if k == 0 else remaining_frames)
+                end_frame = frame_batch_size * (k + 1) + remaining_frames
+                tile = z[
+                    :,
+                    :,
+                    start_frame:end_frame,
+                    i : i + tile_latent_min_height,
+                    j : j + tile_latent_min_width,
+                ]
+                tile = decoder(tile)
+                temporal.append(tile)
+                pbar.update(1)
+            row.append(torch.cat(temporal, dim=2))
+        rows.append(row)
+
+    result_rows = []
+    for i, row in enumerate(rows):
+        result_row = []
+        for j, tile in enumerate(row):
+            # blend the above tile and the left tile
+            # to the current tile and add the current tile to the result row
+            if i > 0:
+                tile = blend_v(rows[i - 1][j], tile, blend_extent_height)
+            if j > 0:
+                tile = blend_h(row[j - 1], tile, blend_extent_width)
+            result_row.append(tile[:, :, :, :row_limit_height, :row_limit_width])
+        result_rows.append(torch.cat(result_row, dim=4))
+
+    return decoded_latents_to_frames(torch.cat(result_rows, dim=3))
 
 
 @contextmanager
-def move_to_device(model: nn.Module, device):
-    model_device = next(model.parameters()).device
-    # get the id and check if it's cpu
-    # if device is not cpu, do nothing
-    model.to(device)
+def move_to_device(model: nn.Module, target_device):
+    og_device = next(model.parameters()).device
+    if og_device == target_device:
+        print(f"move_to_device is a no-op model is already on {target_device}")
+    else:
+        print(f"moving model from {og_device} -> {target_device}")
+
+    model.to(target_device)
     yield
-    model.to("cpu")
+    model.to(og_device)
 
 
 def t5_tokenizer():
@@ -402,12 +493,16 @@ class MochiSingleGPUPipeline:
         text_encoder_factory: ModelFactory,
         dit_factory: ModelFactory,
         decoder_factory: ModelFactory,
-        cpu_offload: bool,
+        cpu_offload: Optional[bool] = False,
+        tiled_decode: Optional[bool] = False,
+        tiled_decode_args: Optional[Dict[str, Any]] = None,
     ):
         self.device = torch.device("cuda:0")
         self.tokenizer = t5_tokenizer()
         t = Timer()
         self.cpu_offload = cpu_offload
+        self.tiled_decode_args = tiled_decode_args or {}
+        self.tiled_decode = tiled_decode
         init_id = "cpu" if cpu_offload else 0
         with t("load_text_encoder"):
             self.text_encoder = text_encoder_factory.get_model(
@@ -423,7 +518,11 @@ class MochiSingleGPUPipeline:
 
     def __call__(self, batch_cfg, prompt, negative_prompt, **kwargs):
         with progress_bar(type="tqdm"), torch.inference_mode():
-            with move_to_device(self.text_encoder, "cuda:0"):
+            print_max_memory = lambda: print(
+                f"Max memory reserved: {torch.cuda.max_memory_reserved() / 1024**3:.2f} GB"
+            )
+            print_max_memory()
+            with move_to_device(self.text_encoder, self.device):
                 conditioning = get_conditioning(
                     self.tokenizer,
                     self.text_encoder,
@@ -432,11 +531,18 @@ class MochiSingleGPUPipeline:
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                 )
-            with move_to_device(self.dit, "cuda:0"):
+            print_max_memory()
+            with move_to_device(self.dit, self.device):
                 latents = sample_model(self.device, self.dit, conditioning, **kwargs)
-            with move_to_device(self.decoder, "cuda:0"):
-                frames = decode_latents(self.decoder, latents)
-            return frames
+            print_max_memory()
+            with move_to_device(self.decoder, self.device):
+                frames = (
+                    decode_latents_tiled(self.decoder, latents, **self.tiled_decode_args)
+                    if self.tiled_decode
+                    else decode_latents(self.decoder, latents)
+                )
+            print_max_memory()
+            return frames.cpu().numpy()
 
 
 ### ALL CODE BELOW HERE IS FOR MULTI-GPU MODE ###
@@ -461,7 +567,7 @@ class MultiGPUContext:
         assert world_size > 1, f"Multi-GPU mode requires world_size > 1, got {world_size}"
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = "29500"
-        with t('init_process_group'):
+        with t("init_process_group"):
             dist.init_process_group(
                 "nccl",
                 rank=local_rank,
@@ -523,8 +629,10 @@ class MochiMultiGPUPipeline:
                     negative_prompt=negative_prompt,
                 )
                 latents = sample_model(ctx.device, ctx.dit, conditioning=conditioning, **kwargs)
+                if ctx.local_rank == 0:
+                    torch.save(latents, "latents.pt")
                 frames = decode_latents(ctx.decoder, latents)
-            return frames
+            return frames.cpu().numpy()
 
         return ray.get([ctx.run.remote(fn=sample, **kwargs, show_progress=i == 0) for i, ctx in enumerate(self.ctxs)])[
             0

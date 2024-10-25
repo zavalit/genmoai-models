@@ -1,5 +1,5 @@
 import contextlib
-from typing import Iterable, Iterator, Optional
+from typing import Any, Iterable, Iterator, Optional
 
 try:
     from tqdm import tqdm
@@ -35,19 +35,19 @@ class DummyProgressBar:
         pass
 
 
-def get_new_progress_bar(iterable: Optional[Iterable] = None, **kwargs) -> Iterator:
+def get_new_progress_bar(iterable: Optional[Iterable] = None, **kwargs) -> Any:
     if not _is_progress_bar_active:
         raise RuntimeError("get_new_progress_bar must be called within a progress_bar context")
 
     if _current_progress_type == "tqdm":
         if tqdm is None:
             raise ImportError("tqdm is required but not installed. Please install tqdm to use the tqdm progress bar.")
-        return tqdm(iterable, **kwargs)
+        return tqdm(iterable=iterable, **kwargs)
     elif _current_progress_type == "ray_tqdm":
         if ray_tqdm is None:
             raise ImportError("ray is required but not installed. Please install ray to use the ray_tqdm progress bar.")
-        return ray_tqdm(iterable, **kwargs)
-    return DummyProgressBar(iterable, **kwargs)
+        return ray_tqdm(iterable=iterable, **kwargs)
+    return DummyProgressBar(iterable=iterable, **kwargs)
 
 
 @contextlib.contextmanager

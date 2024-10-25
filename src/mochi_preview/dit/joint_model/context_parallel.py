@@ -8,6 +8,13 @@ _CONTEXT_PARALLEL_GROUP_SIZE = None
 _CONTEXT_PARALLEL_GROUP_RANKS = None
 
 
+def get_cp_rank_size():
+    if _CONTEXT_PARALLEL_GROUP:
+        return _CONTEXT_PARALLEL_RANK, _CONTEXT_PARALLEL_GROUP_SIZE
+    else:
+        return 0, 1
+
+
 def local_shard(x: torch.Tensor, dim: int = 2) -> torch.Tensor:
     if not _CONTEXT_PARALLEL_GROUP:
         return x
@@ -41,13 +48,6 @@ def get_cp_group():
 
 def is_cp_active():
     return _CONTEXT_PARALLEL_GROUP is not None
-
-
-def get_cp_rank_size():
-    if _CONTEXT_PARALLEL_GROUP:
-        return _CONTEXT_PARALLEL_RANK, _CONTEXT_PARALLEL_GROUP_SIZE
-    else:
-        return 0, 1
 
 
 class AllGatherIntoTensorFunction(torch.autograd.Function):

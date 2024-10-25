@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-from flash_attn import flash_attn_varlen_qkvpacked_func
 from torch.nn.attention import sdpa_kernel
 
 import mochi_preview.dit.joint_model.context_parallel as cp
@@ -34,20 +33,7 @@ from mochi_preview.dit.joint_model.utils import (
 COMPILE_FINAL_LAYER = os.environ.get("COMPILE_DIT") == "1"
 COMPILE_MMDIT_BLOCK = os.environ.get("COMPILE_DIT") == "1"
 
-try:
-    from flash_attn import flash_attn_varlen_qkvpacked_func
-
-    FLASH_ATTN_IS_AVAILABLE = True
-except ImportError:
-    flash_attn_varlen_qkvpacked_func = None
-    FLASH_ATTN_IS_AVAILABLE = False
-try:
-    from sageattention import sageattn
-
-    SAGEATTN_IS_AVAILABLE = True
-except ImportError:
-    sageattn = None
-    SAGEATTN_IS_AVAILABLE = False
+from mochi_preview.attn_imports import comfy_attn, flash_varlen_qkvpacked_attn, sage_attn, sdpa_attn_ctx
 
 
 class AsymmetricAttention(nn.Module):
@@ -60,10 +46,12 @@ class AsymmetricAttention(nn.Module):
         qk_norm: bool = False,
         update_y: bool = True,
         out_bias: bool = True,
+        attention_mode: str = "flash",
         softmax_scale: Optional[float] = None,
         device: Optional[torch.device] = None,
     ):
         super().__init__()
+        self.attention_mode = attention_mode
         self.dim_x = dim_x
         self.dim_y = dim_y
         self.num_heads = num_heads
@@ -153,6 +141,36 @@ class AsymmetricAttention(nn.Module):
 
         return qkv
 
+    def flash_attention(self, qkv, cu_seqlens, max_seqlen_in_batch, total, local_dim):
+        with torch.autocast("cuda", enabled=False):
+            out: torch.Tensor = flash_varlen_qkvpacked_attn(
+                qkv,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen_in_batch,
+                dropout_p=0.0,
+                softmax_scale=self.softmax_scale,
+            )  # (total, local_heads, head_dim)
+            return out.view(total, local_dim)
+
+    def sdpa_attention(self, qkv):
+        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
+        with torch.autocast("cuda", enabled=False):
+            with sdpa_attn_ctx():
+                out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+                return rearrange(out, "b h s d -> s (b h d)")
+
+    def sage_attention(self, qkv):
+        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
+        with torch.autocast("cuda", enabled=False):
+            out = sage_attn(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+            return rearrange(out, "b h s d -> s (b h d)")
+
+    def comfy_attention(self, qkv):
+        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
+        with torch.autocast("cuda", enabled=False):
+            out = comfy_attn(q, k, v, heads=self.num_heads, skip_reshape=True)
+            return out.squeeze(0)
+
     @torch.compiler.disable()
     def run_attention(
         self,
@@ -172,15 +190,17 @@ class AsymmetricAttention(nn.Module):
         local_dim = local_heads * self.head_dim
         total = qkv.size(0)
 
-        with torch.autocast("cuda", enabled=False):
-            out: torch.Tensor = flash_attn_varlen_qkvpacked_func(
-                qkv,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen_in_batch,
-                dropout_p=0.0,
-                softmax_scale=self.softmax_scale,
-            )  # (total, local_heads, head_dim)
-            out = out.view(total, local_dim)
+        if self.attention_mode != "flash":
+            assert B == 1, f"Non-flash attention only supports batch size 1, got {B}"
+
+        if self.attention_mode == "flash":
+            out = self.flash_attention(qkv, cu_seqlens, max_seqlen_in_batch, total, local_dim)
+        elif self.attention_mode == "sdpa":
+            out = self.sdpa_attention(qkv)
+        elif self.attention_mode == "sage":
+            out = self.sage_attention(qkv)
+        elif self.attention_mode == "comfy":
+            out = self.comfy_attention(qkv)
 
         x, y = pad_and_split_xy(out, valid_token_indices, B, N, L, qkv.dtype)
         assert x.size() == (B, N, local_dim)

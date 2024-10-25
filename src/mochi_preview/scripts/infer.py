@@ -8,7 +8,6 @@ import numpy as np
 import torch
 from PIL import Image
 
-from mochi_preview.dit.joint_model.asymm_models_joint import FLASH_ATTN_IS_AVAILABLE
 from mochi_preview.pipelines import (
     DecoderModelFactory,
     DitModelFactory,
@@ -22,11 +21,13 @@ from mochi_preview.progress import progress_bar
 pipeline = None
 model_dir_path = None
 num_gpus = torch.cuda.device_count()
+cpu_offload = False
 
 
-def set_model_path(path):
-    global model_dir_path
-    model_dir_path = path
+def set_model_path(model_dir_path_, cpu_offload_):
+    global model_dir_path, cpu_offload
+    model_dir_path = model_dir_path_
+    cpu_offload = cpu_offload_
 
 
 def load_model():
@@ -44,7 +45,11 @@ def load_model():
             ),
         )
         if num_gpus > 1:
+            assert not cpu_offload, "CPU offload not supported in multi-GPU mode"
             kwargs["world_size"] = num_gpus
+        else:
+            kwargs["cpu_offload"] = cpu_offload
+            kwargs["tiled_decode"] = True
         pipeline = klass(**kwargs)
 
 
@@ -79,7 +84,6 @@ def generate_video(
         "num_inference_steps": num_inference_steps,
         # We *need* flash attention to batch cfg
         # and it's only worth doing in a high-memory regime (assume multiple GPUs)
-        # "batch_cfg": FLASH_ATTN_IS_AVAILABLE and num_gpus > 1,
         "batch_cfg": False,
         "prompt": prompt,
         "negative_prompt": negative_prompt,
@@ -126,18 +130,11 @@ def generate_video(
 @click.option("--cfg_scale", default=4.5, type=float, help="CFG Scale.")
 @click.option("--num_steps", default=64, type=int, help="Number of inference steps.")
 @click.option("--model_dir", required=True, help="Path to the model directory.")
+@click.option("--cpu_offload", is_flag=True, help="Whether to offload model to CPU")
 def generate_cli(
-    prompt,
-    negative_prompt,
-    width,
-    height,
-    num_frames,
-    seed,
-    cfg_scale,
-    num_steps,
-    model_dir,
+    prompt, negative_prompt, width, height, num_frames, seed, cfg_scale, num_steps, model_dir, cpu_offload
 ):
-    set_model_path(model_dir)
+    set_model_path(model_dir, cpu_offload)
     output = generate_video(
         prompt,
         negative_prompt,
