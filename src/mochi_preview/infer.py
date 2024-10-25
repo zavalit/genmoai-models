@@ -16,6 +16,7 @@ from mochi_preview.handler import MochiWrapper
 model = None
 model_path = None
 
+ray.init(num_cpus=2, num_gpus=0)
 
 def set_model_path(path):
     global model_path
@@ -25,18 +26,25 @@ def set_model_path(path):
 def load_model():
     global model, model_path
     if model is None:
-        ray.init()
+        
         MOCHI_DIR = model_path
         VAE_CHECKPOINT_PATH = f"{MOCHI_DIR}/vae.safetensors"
         MODEL_CONFIG_PATH = f"{MOCHI_DIR}/dit-config.yaml"
         MODEL_CHECKPOINT_PATH = f"{MOCHI_DIR}/dit.safetensors"
-        num_gpus = torch.mps.device_count()
-        if num_gpus < 4:
-            print(f"WARNING: Mochi requires at least 4xH100 GPUs, but only {num_gpus} GPU(s) are available.")
-        print(f"Launching with {num_gpus} GPUs.")
+
+        if torch.backends.mps.is_available():
+            num_gpus = torch.mps.device_count()  # This will usually be 1 for Apple M1
+            print(f"Using {num_gpus} MPS device(s) on Apple Silicon.")
+        else:
+            num_gpus = 0
+            print(f"Using CPU since MPS is not available.")
+
+        if num_gpus < 1:
+            print(f"WARNING: This model was designed for 4xH100 GPUs, but only {num_gpus} MPS GPU(s) are available.")
+        print(f"Launching with {num_gpus} device(s).")
 
         model = MochiWrapper(
-            num_workers=num_gpus,
+            num_workers=num_gpus if num_gpus > 0 else 1,  # Use CPU fallback if no MPS
             vae_stats_path=f"{MOCHI_DIR}/vae_stats.json",
             vae_checkpoint_path=VAE_CHECKPOINT_PATH,
             dit_config_path=MODEL_CONFIG_PATH,

@@ -13,9 +13,11 @@ def noexcept(f):
 class MochiWrapper:
     def __init__(self, *, num_workers, **actor_kwargs):
         super().__init__()
+        #ray.init(num_cpus=2, num_gpus=0)
+
         RemoteClass = ray.remote(T2VSynthMochiModel)
         self.workers = [
-            RemoteClass.options(num_gpus=1).remote(
+            RemoteClass.options(num_gpus=0).remote(
                 device_id=0, world_size=num_workers, local_rank=i, **actor_kwargs
             )
             for i in range(num_workers)
