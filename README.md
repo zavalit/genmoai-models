@@ -49,7 +49,7 @@ Replace `<path_to_downloaded_directory>` with the path to your model directory.
 
 ## API
 
-This repository comes with a simple, composable API so you can programmatically call the model. You can find a full example [here](demos/api_example.py). But, roughly, it looks like this:
+This repository comes with a simple, composable API, so you can programmatically call the model. You can find a full example [here](demos/api_example.py). But, roughly, it looks like this:
 
 ```python
 from genmo.mochi_preview.pipelines import (
