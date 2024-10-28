@@ -5,26 +5,25 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-from flash_attn import flash_attn_varlen_qkvpacked_func
 from torch.nn.attention import sdpa_kernel
 
-import mochi_preview.dit.joint_model.context_parallel as cp
-from mochi_preview.dit.joint_model.layers import (
+import genmo.mochi_preview.dit.joint_model.context_parallel as cp
+from genmo.mochi_preview.dit.joint_model.layers import (
     FeedForward,
     PatchEmbed,
     RMSNorm,
     TimestepEmbedder,
 )
-from mochi_preview.dit.joint_model.mod_rmsnorm import modulated_rmsnorm
-from mochi_preview.dit.joint_model.residual_tanh_gated_rmsnorm import (
+from genmo.mochi_preview.dit.joint_model.mod_rmsnorm import modulated_rmsnorm
+from genmo.mochi_preview.dit.joint_model.residual_tanh_gated_rmsnorm import (
     residual_tanh_gated_rmsnorm,
 )
-from mochi_preview.dit.joint_model.rope_mixed import (
+from genmo.mochi_preview.dit.joint_model.rope_mixed import (
     compute_mixed_rotation,
     create_position_matrix,
 )
-from mochi_preview.dit.joint_model.temporal_rope import apply_rotary_emb_qk_real
-from mochi_preview.dit.joint_model.utils import (
+from genmo.mochi_preview.dit.joint_model.temporal_rope import apply_rotary_emb_qk_real
+from genmo.mochi_preview.dit.joint_model.utils import (
     AttentionPool,
     modulate,
     pad_and_split_xy,
@@ -33,6 +32,8 @@ from mochi_preview.dit.joint_model.utils import (
 
 COMPILE_FINAL_LAYER = os.environ.get("COMPILE_DIT") == "1"
 COMPILE_MMDIT_BLOCK = os.environ.get("COMPILE_DIT") == "1"
+
+from genmo.lib.attn_imports import comfy_attn, flash_varlen_qkvpacked_attn, sage_attn, sdpa_attn_ctx
 
 
 class AsymmetricAttention(nn.Module):
@@ -45,10 +46,12 @@ class AsymmetricAttention(nn.Module):
         qk_norm: bool = False,
         update_y: bool = True,
         out_bias: bool = True,
+        attention_mode: str = "flash",
         softmax_scale: Optional[float] = None,
         device: Optional[torch.device] = None,
     ):
         super().__init__()
+        self.attention_mode = attention_mode
         self.dim_x = dim_x
         self.dim_y = dim_y
         self.num_heads = num_heads
@@ -56,9 +59,7 @@ class AsymmetricAttention(nn.Module):
         self.update_y = update_y
         self.softmax_scale = softmax_scale
         if dim_x % num_heads != 0:
-            raise ValueError(
-                f"dim_x={dim_x} should be divisible by num_heads={num_heads}"
-            )
+            raise ValueError(f"dim_x={dim_x} should be divisible by num_heads={num_heads}")
 
         # Input layers.
         self.qkv_bias = qkv_bias
@@ -75,11 +76,7 @@ class AsymmetricAttention(nn.Module):
 
         # Output layers. y features go back down from dim_x -> dim_y.
         self.proj_x = nn.Linear(dim_x, dim_x, bias=out_bias, device=device)
-        self.proj_y = (
-            nn.Linear(dim_x, dim_y, bias=out_bias, device=device)
-            if update_y
-            else nn.Identity()
-        )
+        self.proj_y = nn.Linear(dim_x, dim_y, bias=out_bias, device=device) if update_y else nn.Identity()
 
     def run_qkv_y(self, y):
         cp_rank, cp_size = cp.get_cp_rank_size()
@@ -88,9 +85,7 @@ class AsymmetricAttention(nn.Module):
         if cp.is_cp_active():
             # Only predict local heads.
             assert not self.qkv_bias
-            W_qkv_y = self.qkv_y.weight.view(
-                3, self.num_heads, self.head_dim, self.dim_y
-            )
+            W_qkv_y = self.qkv_y.weight.view(3, self.num_heads, self.head_dim, self.dim_y)
             W_qkv_y = W_qkv_y.narrow(1, cp_rank * local_heads, local_heads)
             W_qkv_y = W_qkv_y.reshape(3 * local_heads * self.head_dim, self.dim_y)
             qkv_y = F.linear(y, W_qkv_y, None)  # (B, L, 3 * local_h * head_dim)
@@ -118,9 +113,7 @@ class AsymmetricAttention(nn.Module):
         # Process visual features
         qkv_x = self.qkv_x(x)  # (B, M, 3 * dim_x)
         assert qkv_x.dtype == torch.bfloat16
-        qkv_x = cp.all_to_all_collect_tokens(
-            qkv_x, self.num_heads
-        )  # (3, B, N, local_h, head_dim)
+        qkv_x = cp.all_to_all_collect_tokens(qkv_x, self.num_heads)  # (3, B, N, local_h, head_dim)
 
         # Process text features
         y = modulated_rmsnorm(y, scale_y)  # (B, L, dim_y)
@@ -148,6 +141,36 @@ class AsymmetricAttention(nn.Module):
 
         return qkv
 
+    def flash_attention(self, qkv, cu_seqlens, max_seqlen_in_batch, total, local_dim):
+        with torch.autocast("cuda", enabled=False):
+            out: torch.Tensor = flash_varlen_qkvpacked_attn(
+                qkv,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen_in_batch,
+                dropout_p=0.0,
+                softmax_scale=self.softmax_scale,
+            )  # (total, local_heads, head_dim)
+            return out.view(total, local_dim)
+
+    def sdpa_attention(self, qkv):
+        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
+        with torch.autocast("cuda", enabled=False):
+            with sdpa_attn_ctx():
+                out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+                return rearrange(out, "b h s d -> s (b h d)")
+
+    def sage_attention(self, qkv):
+        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
+        with torch.autocast("cuda", enabled=False):
+            out = sage_attn(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False)
+            return rearrange(out, "b h s d -> s (b h d)")
+
+    def comfy_attention(self, qkv):
+        q, k, v = rearrange(qkv, "(b s) t h d -> t b h s d", b=1)
+        with torch.autocast("cuda", enabled=False):
+            out = comfy_attn(q, k, v, heads=self.num_heads, skip_reshape=True)
+            return out.squeeze(0)
+
     @torch.compiler.disable()
     def run_attention(
         self,
@@ -167,15 +190,17 @@ class AsymmetricAttention(nn.Module):
         local_dim = local_heads * self.head_dim
         total = qkv.size(0)
 
-        with torch.autocast("cuda", enabled=False):
-            out: torch.Tensor = flash_attn_varlen_qkvpacked_func(
-                qkv,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen_in_batch,
-                dropout_p=0.0,
-                softmax_scale=self.softmax_scale,
-            )  # (total, local_heads, head_dim)
-            out = out.view(total, local_dim)
+        if self.attention_mode != "flash":
+            assert B == 1, f"Non-flash attention only supports batch size 1, got {B}"
+
+        if self.attention_mode == "flash":
+            out = self.flash_attention(qkv, cu_seqlens, max_seqlen_in_batch, total, local_dim)
+        elif self.attention_mode == "sdpa":
+            out = self.sdpa_attention(qkv)
+        elif self.attention_mode == "sage":
+            out = self.sage_attention(qkv)
+        elif self.attention_mode == "comfy":
+            out = self.comfy_attention(qkv)
 
         x, y = pad_and_split_xy(out, valid_token_indices, B, N, L, qkv.dtype)
         assert x.size() == (B, N, local_dim)
@@ -187,9 +212,7 @@ class AsymmetricAttention(nn.Module):
 
         if cp.is_cp_active():
             y = cp.all_gather(y)  # (cp_size * B, L, local_heads * head_dim)
-            y = rearrange(
-                y, "(G B) L D -> B L (G D)", G=cp_size, D=local_dim
-            )  # (B, L, dim_x)
+            y = rearrange(y, "(G B) L D -> B L (G D)", G=cp_size, D=local_dim)  # (B, L, dim_x)
         y = self.proj_y(y)  # (B, L, dim_y)
         return x, y
 
@@ -240,6 +263,7 @@ class AsymmetricAttention(nn.Module):
             valid_token_indices=packed_indices["valid_token_indices_kv"],
         )
         return x, y
+
 
 @torch.compile(disable=not COMPILE_MMDIT_BLOCK)
 class AsymmetricJointBlock(nn.Module):
@@ -376,13 +400,9 @@ class FinalLayer(nn.Module):
         device: Optional[torch.device] = None,
     ):
         super().__init__()
-        self.norm_final = nn.LayerNorm(
-            hidden_size, elementwise_affine=False, eps=1e-6, device=device
-        )
+        self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6, device=device)
         self.mod = nn.Linear(hidden_size, 2 * hidden_size, device=device)
-        self.linear = nn.Linear(
-            hidden_size, patch_size * patch_size * out_channels, device=device
-        )
+        self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, device=device)
 
     def forward(self, x, c):
         c = F.silu(c)
@@ -427,15 +447,11 @@ class AsymmDiTJoint(nn.Module):
         self.num_heads = num_heads
         self.hidden_size_x = hidden_size_x
         self.hidden_size_y = hidden_size_y
-        self.head_dim = (
-            hidden_size_x // num_heads
-        )  # Head dimension and count is determined by visual.
+        self.head_dim = hidden_size_x // num_heads  # Head dimension and count is determined by visual.
         self.use_extended_posenc = use_extended_posenc
         self.t5_token_length = t5_token_length
         self.t5_feat_dim = t5_feat_dim
-        self.rope_theta = (
-            rope_theta  # Scaling factor for frequency computation for temporal RoPE.
-        )
+        self.rope_theta = rope_theta  # Scaling factor for frequency computation for temporal RoPE.
 
         self.x_embedder = PatchEmbed(
             patch_size=patch_size,
@@ -446,24 +462,16 @@ class AsymmDiTJoint(nn.Module):
         )
         # Conditionings
         # Timestep
-        self.t_embedder = TimestepEmbedder(
-            hidden_size_x, bias=timestep_mlp_bias, timestep_scale=timestep_scale
-        )
+        self.t_embedder = TimestepEmbedder(hidden_size_x, bias=timestep_mlp_bias, timestep_scale=timestep_scale)
 
         # Caption Pooling (T5)
-        self.t5_y_embedder = AttentionPool(
-            t5_feat_dim, num_heads=8, output_dim=hidden_size_x, device=device
-        )
+        self.t5_y_embedder = AttentionPool(t5_feat_dim, num_heads=8, output_dim=hidden_size_x, device=device)
 
         # Dense Embedding Projection (T5)
-        self.t5_yproj = nn.Linear(
-            t5_feat_dim, hidden_size_y, bias=True, device=device
-        )
+        self.t5_yproj = nn.Linear(t5_feat_dim, hidden_size_y, bias=True, device=device)
 
         # Initialize pos_frequencies as an empty parameter.
-        self.pos_frequencies = nn.Parameter(
-            torch.empty(3, self.num_heads, self.head_dim // 2, device=device)
-        )
+        self.pos_frequencies = nn.Parameter(torch.empty(3, self.num_heads, self.head_dim // 2, device=device))
 
         # for depth 48:
         #  b =  0: AsymmetricJointBlock, update_y=True
@@ -489,9 +497,7 @@ class AsymmDiTJoint(nn.Module):
             blocks.append(block)
         self.blocks = nn.ModuleList(blocks)
 
-        self.final_layer = FinalLayer(
-            hidden_size_x, patch_size, self.out_channels, device=device
-        )
+        self.final_layer = FinalLayer(hidden_size_x, patch_size, self.out_channels, device=device)
 
     def embed_x(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -529,9 +535,7 @@ class AsymmDiTJoint(nn.Module):
             pH, pW = H // self.patch_size, W // self.patch_size
             N = T * pH * pW
             assert x.size(1) == N
-            pos = create_position_matrix(
-                T, pH=pH, pW=pW, device=x.device, dtype=torch.float32
-            )  # (N, 3)
+            pos = create_position_matrix(T, pH=pH, pW=pW, device=x.device, dtype=torch.float32)  # (N, 3)
             rope_cos, rope_sin = compute_mixed_rotation(
                 freqs=self.pos_frequencies, pos=pos
             )  # Each are (N, num_heads, dim // 2)
@@ -547,9 +551,7 @@ class AsymmDiTJoint(nn.Module):
                 t5_feat.size(1) == self.t5_token_length
             ), f"Expected L={self.t5_token_length}, got {t5_feat.shape} for y_feat."
             t5_y_pool = self.t5_y_embedder(t5_feat, t5_mask)  # (B, D)
-            assert (
-                t5_y_pool.size(0) == B
-            ), f"Expected B={B}, got {t5_y_pool.shape} for t5_y_pool."
+            assert t5_y_pool.size(0) == B, f"Expected B={B}, got {t5_y_pool.shape} for t5_y_pool."
 
         c = c_t + t5_y_pool
 
@@ -581,17 +583,13 @@ class AsymmDiTJoint(nn.Module):
         # Use EFFICIENT_ATTENTION backend for T5 pooling, since we have a mask.
         # Have to call sdpa_kernel outside of a torch.compile region.
         with sdpa_kernel(torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION):
-            x, c, y_feat, rope_cos, rope_sin = self.prepare(
-                x, sigma, y_feat[0], y_mask[0]
-            )
+            x, c, y_feat, rope_cos, rope_sin = self.prepare(x, sigma, y_feat[0], y_mask[0])
         del y_mask
 
         cp_rank, cp_size = cp.get_cp_rank_size()
         N = x.size(1)
         M = N // cp_size
-        assert (
-            N % cp_size == 0
-        ), f"Visual sequence length ({x.shape[1]}) must be divisible by cp_size ({cp_size})."
+        assert N % cp_size == 0, f"Visual sequence length ({x.shape[1]}) must be divisible by cp_size ({cp_size})."
 
         if cp_size > 1:
             x = x.narrow(1, cp_rank * M, M)
@@ -615,7 +613,7 @@ class AsymmDiTJoint(nn.Module):
         x = self.final_layer(x, c)  # (B, M, patch_size ** 2 * out_channels)
 
         patch = x.size(2)
-        x = cp.all_gather(x) 
+        x = cp.all_gather(x)
         x = rearrange(x, "(G B) M P -> B (G M) P", G=cp_size, P=patch)
         x = rearrange(
             x,

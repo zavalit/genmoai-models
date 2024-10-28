@@ -22,6 +22,11 @@ source .venv/bin/activate
 uv pip install -e . --no-build-isolation
 ```
 
+If you want to install flash attention, you can use:
+```
+uv pip install -e .[flash] --no-build-isolation
+```
+
 ## Download Weights
 
 Download the weights from [Hugging Face](https://huggingface.co/genmo/mochi-1-preview/tree/main) or via `magnet:?xt=urn:btih:441da1af7a16bcaa4f556964f8028d7113d21cbb&dn=weights&tr=udp://tracker.opentrackr.org:1337/announce` to a folder on your computer.
@@ -31,16 +36,56 @@ Download the weights from [Hugging Face](https://huggingface.co/genmo/mochi-1-pr
 Start the gradio UI with
 
 ```bash
-python3 -m mochi_preview.gradio_ui --model_dir "<path_to_downloaded_directory>"
+python3 ./demos/gradio_ui.py --model_dir "<path_to_downloaded_directory>"
 ```
 
 Or generate videos directly from the CLI with
 
 ```bash
-python3 -m mochi_preview.infer --prompt "A hand with delicate fingers picks up a bright yellow lemon from a wooden bowl filled with lemons and sprigs of mint against a peach-colored background. The hand gently tosses the lemon up and catches it, showcasing its smooth texture. A beige string bag sits beside the bowl, adding a rustic touch to the scene. Additional lemons, one halved, are scattered around the base of the bowl. The even lighting enhances the vibrant colors and creates a fresh, inviting atmosphere." --seed 1710977262 --cfg_scale 4.5 --model_dir "<path_to_downloaded_directory>"
+python3 ./demos/cli.py --model_dir "<path_to_downloaded_directory>"
 ```
 
 Replace `<path_to_downloaded_directory>` with the path to your model directory.
+
+## API
+
+This repository comes with a simple, composable API, so you can programmatically call the model. You can find a full example [here](demos/api_example.py). But, roughly, it looks like this:
+
+```python
+from genmo.mochi_preview.pipelines import (
+    DecoderModelFactory,
+    DitModelFactory,
+    MochiSingleGPUPipeline,
+    T5ModelFactory,
+    linear_quadratic_schedule,
+)
+
+pipeline = MochiSingleGPUPipeline(
+    text_encoder_factory=T5ModelFactory(),
+    dit_factory=DitModelFactory(
+        model_path=f"{MOCHI_DIR}/dit.safetensors", model_dtype="bf16"
+    ),
+    decoder_factory=DecoderModelFactory(
+        model_path=f"{MOCHI_DIR}/vae.safetensors",
+        model_stats_path=f"{MOCHI_DIR}/vae_stats.json",
+    ),
+    cpu_offload=True,
+    decode_type="tiled_full",
+)
+
+video = pipeline(
+    height=480,
+    width=848,
+    num_frames=31,
+    num_inference_steps=64,
+    sigma_schedule=linear_quadratic_schedule(64, 0.025),
+    cfg_schedule=[4.5] * 64,
+    batch_cfg=False,
+    prompt="your favorite prompt here ...",
+    negative_prompt="",
+    seed=12345,
+)
+```
 
 ## Model Architecture
 
@@ -70,6 +115,9 @@ Genmo video models are general text-to-video diffusion models that inherently re
 
 ## Limitations
 Under the research preview, Mochi 1 is a living and evolving checkpoint. There are a few known limitations. The initial release generates videos at 480p today. In some edge cases with extreme motion, minor warping and distortions can also occur. Mochi 1 is also optimized for photorealistic styles so does not perform well with animated content. We also anticipate that the community will fine-tune the model to suit various aesthetic preferences.
+
+## Related Work
+- [ComfyUI-MochiWrapper](https://github.com/kijai/ComfyUI-MochiWrapper) adds ComfyUI support for Mochi. The integration of Pytorch's SDPA attention was taken from their repository.
 
 
 ## BibTeX

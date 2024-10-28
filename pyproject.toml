@@ -1,14 +1,13 @@
 [project]
-name = "mochi"
+name = "genmo"
 version = "0.1.0"
-description = "Add your description here"
+description = "Genmo models"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "addict>=2.4.0",
     "click>=8.1.7",
     "einops>=0.8.0",
-    "flash-attn>=2.6.3",
     "gradio>=3.36.1",
     "omegaconf>=2.3.0",
     "pillow>=11.0.0",
@@ -20,5 +19,11 @@ dependencies = [
     "transformers>=4.45.2",
 ]
 
-[project.scripts]
-genmo = "mochi_preview.cli:cli"
+[project.optional-dependencies]
+flash = [
+    "flash-attn>=2.6.3",
+]
+
+[tool.ruff]
+# Allow lines to be as long as 120.
+line-length = 120
