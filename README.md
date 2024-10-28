@@ -27,6 +27,8 @@ If you want to install flash attention, you can use:
 uv pip install -e .[flash] --no-build-isolation
 ```
 
+You will also need to install [FFMPEG](https://www.ffmpeg.org/) to turn your outputs into videos.
+
 ## Download Weights
 
 Download the weights from [Hugging Face](https://huggingface.co/genmo/mochi-1-preview/tree/main) or via `magnet:?xt=urn:btih:441da1af7a16bcaa4f556964f8028d7113d21cbb&dn=weights&tr=udp://tracker.opentrackr.org:1337/announce` to a folder on your computer.
