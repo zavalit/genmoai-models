@@ -1,4 +1,4 @@
 {
-    "include": ["src/mochi_preview/pipelines.py"]
+    "include": ["src/genmo/mochi_preview/pipelines.py"]
 }
   
