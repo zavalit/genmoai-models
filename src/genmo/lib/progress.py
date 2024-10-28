@@ -37,7 +37,7 @@ class DummyProgressBar:
 
 def get_new_progress_bar(iterable: Optional[Iterable] = None, **kwargs) -> Any:
     if not _is_progress_bar_active:
-        raise RuntimeError("get_new_progress_bar must be called within a progress_bar context")
+        return DummyProgressBar(iterable=iterable, **kwargs)
 
     if _current_progress_type == "tqdm":
         if tqdm is None:

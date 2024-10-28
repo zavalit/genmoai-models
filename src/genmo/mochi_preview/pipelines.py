@@ -493,6 +493,8 @@ def move_to_device(model: nn.Module, target_device):
 
     model.to(target_device)
     yield
+    if og_device != target_device:
+        print(f"moving model from {target_device} -> {og_device}")
     model.to(og_device)
 
 
