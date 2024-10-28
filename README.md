@@ -1,11 +1,3 @@
-correct:
-
-z: torch.Size([2, 12, 28, 60, 106]), sigma: torch.Size([2]), y_mask: torch.Size([2, 256]), y_feat: torch.Size([2, 256, 4096])packed_indices: (cu_seqlens) torch.Size([3]), (max_seqlen) 44638, (valid_token_indices) torch.Size([89158])
-
-incorrect:
-z: torch.Size([2, 12, 28, 60, 106]), sigma: torch.Size([2]), y_mask: torch.Size([2, 256]), y_feat: torch.Size([2, 256, 4096])packed_indices: (cu_seqlens) torch.Size([3]), (max_seqlen) 44638, (valid_token_indices) torch.Size([89158])
-
-
 # Mochi 1
 [Blog](https://www.genmo.ai/blog) | [Hugging Face](https://huggingface.co/genmo/mochi-1-preview) | [Playground](https://www.genmo.ai/play) | [Careers](https://jobs.ashbyhq.com/genmo)
 
