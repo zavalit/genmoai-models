@@ -19,6 +19,7 @@ cd models
 pip install uv
 uv venv .venv
 source .venv/bin/activate
+uv pip install setuptools
 uv pip install -e . --no-build-isolation
 ```
 
@@ -69,7 +70,6 @@ pipeline = MochiSingleGPUPipeline(
     ),
     decoder_factory=DecoderModelFactory(
         model_path=f"{MOCHI_DIR}/vae.safetensors",
-        model_stats_path=f"{MOCHI_DIR}/vae_stats.json",
     ),
     cpu_offload=True,
     decode_type="tiled_full",
